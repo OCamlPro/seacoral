@@ -13,6 +13,9 @@ jobs:
   docker:
     name: Build, test, and deploy
     runs-on: ubuntu-latest
+    env:
+      doPush: ${{ (github.ref_name == 'main' || github.ref_type == 'tag') &&
+                  (github.repository == 'ocamlpro/seacoral') }}
     steps:
       -
         name: Checkout
@@ -21,6 +24,7 @@ jobs:
         name: Setup Docker metadata
         id: meta
         uses: docker/metadata-action@v5
+        if: ${{ env.doPush == 'true' }}
         with:
           # list of Docker images to use as base name for tags
           images: |
@@ -38,7 +42,7 @@ jobs:
       -
         name: "Login to OCamlPro's registry"
         uses: docker/login-action@v3
-        if: ${{ github.ref_name == 'main' || github.ref_type == 'tag' }}
+        if: ${{ env.doPush == 'true' }}
         with:
           registry: ${{ vars.GITLAB_REGISTRY }}
           username: ${{ secrets.GITLAB_USER }}
@@ -62,7 +66,7 @@ jobs:
           build-args: |
              RUN_TESTS=yes
              RUN_TESTS_JOBS=8
-          push: ${{ github.ref_name == 'main' || github.ref_type == 'tag' }}
+          push: ${{ env.doPush == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
