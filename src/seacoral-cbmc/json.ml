@@ -515,7 +515,9 @@ module Output = struct
          (opt "trace" (list instruction))
       )
 
-  let assert_analysis_output = list @@ cell (obj1 (req "result" (list assertion_check)))
+  let assert_analysis_result = obj1 (req "result" (list assertion_check))
+
+  let assert_analysis_output = list @@ cell assert_analysis_result
 end
 
 let log_exn exn =

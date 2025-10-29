@@ -14,9 +14,16 @@ open Types
 open DATA
 
 open Lwt.Syntax
-open Sc_sys.Lwt_file.Syntax
 
 type 'a process_result = 'a
+
+type 'a cbmc_run =
+  store:Sc_store.t ->
+  runner_options:runner_options ->
+  entrypoint:string ->
+  files:[ `C ] Sc_sys.File.t list ->
+  OPTIONS.t ->
+  'a Lwt_stream.t
 
 (* --- *)
 
@@ -24,12 +31,12 @@ let log_src = Logs.Src.create ~doc:"Logs of CBMC caller" "Sc_cbmc.Runner"
 module Log = (val (Ez_logs.from_src log_src))
 
 type _ exec_kind =
-  | GetProperties : property list cell list exec_kind
-  | GetCoverObjectives : property list cell list exec_kind
-  | GetCLabels : Sc_C.Cov_label.simple list -> property list cell list exec_kind
-  | CoverAnalysis : [`simple] analysis_env -> cbmc_cover_output cell list exec_kind
-  | AssertAnalysis : [`simple] analysis_env -> cbmc_assert_output cell list exec_kind
-  | CLabelAnalysis : [`simple] analysis_env -> cbmc_assert_output cell list exec_kind
+  | GetProperties : property list cell exec_kind
+  | GetCoverObjectives : property list cell exec_kind
+  | GetCLabels : Sc_C.Cov_label.simple list -> property list cell exec_kind
+  | CoverAnalysis : [`simple] analysis_env -> cbmc_cover_output cell exec_kind
+  | AssertAnalysis : [`simple] analysis_env -> cbmc_assert_output cell exec_kind
+  | CLabelAnalysis : [`simple] analysis_env -> cbmc_assert_output cell exec_kind
 
 let pp_execution_kind (type k) : k exec_kind Fmt.t = fun ppf e ->
   Fmt.string ppf @@ match e with
@@ -121,7 +128,58 @@ let uncovered_properties
   in
   SimpleLabelEnv env
 
+let treat_cbmc_output_stream
+      ~stream
+      ~handle_line
+      ~handle_json_object =
+  let json = Buffer.create 42 in
+  let fmt = Format.formatter_of_buffer json in
+  let parenthesis_depth = ref 0 in
+  (* Lwt.async (fun () -> *)
+  Lwt.catch (fun () ->
+      Lwt_stream.iter_s
+        (fun l ->
+          let* () = handle_line l in
+          (* let* () = Lwt_io.write_line output_chan l in *)
+          let l_no_space = String.trim l in
+          let () =
+            if l_no_space = "" then ()
+            else
+              match l_no_space.[0] with
+              | '[' when !parenthesis_depth = 0 -> parenthesis_depth := 1
+              | _ ->
+                 String.iter
+                   (fun c ->
+                     match c with
+                     | '{' ->
+                        incr parenthesis_depth;
+                        Format.pp_print_char fmt c;
+                     | '}' ->
+                        decr parenthesis_depth;
+                        Format.pp_print_char fmt c;
+                        if !parenthesis_depth = 1 then
+                          begin
+                            Format.pp_print_flush fmt ();
+                            handle_json_object (Buffer.contents json);
+                            Buffer.clear json
+                          end
+                     | ',' when !parenthesis_depth = 1 -> ()
+                     | _ ->
+                        Format.pp_print_char fmt c;
+                   ) l;
+                 Format.pp_print_char fmt '\n'
+          in
+          Lwt.return ()
+        )
+        stream
+    )
+    (function
+     | Lwt_io.Channel_closed _ -> Lwt.return ()
+     | exn -> Lwt.reraise exn)
+    (* ) *)
+
 let cbmc_generic_process
+    ~push_in_resstream
     ~resdir
     ~timeout
     ~(inputs_json : [>`json] Sc_sys.File.t)
@@ -138,6 +196,7 @@ let cbmc_generic_process
     Log.debug "errors: `%a'" Sc_sys.File.print errors_file;
     Sc_sys.Lwt_file.descriptor errors_file [O_WRONLY; O_CREAT; O_TRUNC] 0o600
   in
+  let close_stream () = push_in_resstream None in
   let* proc =
     Sc_sys.Process.exec
       Sc_sys.Ezcmd.Std.(make "cbmc" |>
@@ -145,14 +204,35 @@ let cbmc_generic_process
                         rawf "-I%a" Sc_sys.File.print resdir |>
                         to_cmd)
       ~stdin:(`FD_move (Lwt_unix.unix_file_descr inputs_fd))
-      ~stdout:(`FD_move (Lwt_unix.unix_file_descr outputs_fd))
+      ~stdout:`Keep
       ~stderr:(`FD_move (Lwt_unix.unix_file_descr errors_fd))
       ~timeout
-      ~on_success:Lwt.return_ok
-      ~on_error:Lwt.return_error
+      ~on_success:(fun () -> close_stream (); Lwt.return_ok ())
+      ~on_error:(fun e -> close_stream (); Lwt.return_error e)
+  in
+  (* let* _one = Lwt_unix.write outputs_fd (Bytes.of_string "[") 0 1 in *)
+  let _ : unit Lwt.t =
+    (* push_in_resstream None; *)
+    treat_cbmc_output_stream
+      ~stream:(Sc_sys.Process.stdout_lines proc)
+      ~handle_line:(fun l ->
+        let b = Bytes.of_string (l ^ "\n") in
+        let len = Bytes.length b in
+        let () =
+          Lwt.async (fun () ->
+              let* _len_w = Lwt_unix.write outputs_fd b 0 len in
+              Lwt.return ()
+            )
+        in
+        Lwt.return ()
+      )
+      ~handle_json_object:(fun json -> push_in_resstream (Some json))
   in
   let* _cancel_kill =
-    Sc_store.on_termination store ~h:(fun _ -> Sc_sys.Process.terminate proc)
+    Sc_store.on_termination store ~h:(fun _ ->
+        Log.err "Process end";
+        push_in_resstream None;
+        Sc_sys.Process.terminate proc)
   in
   Sc_sys.Process.join proc
 
@@ -211,7 +291,7 @@ let opt_encoding_and_cmd_options_from_exec_kind
         ~oshow_properties:true
         ~files
         sc_opt,
-      Json.Output.property_data
+      Json.Output.(cell properties)
 
   | GetCoverObjectives ->
       sc_opt_to_opt
@@ -220,7 +300,7 @@ let opt_encoding_and_cmd_options_from_exec_kind
         ~ocover:"cover"
         ~files
         sc_opt,
-      Json.Output.property_data
+      Json.Output.(cell properties)
 
   | GetCLabels lbls ->
       sc_opt_to_opt
@@ -229,7 +309,7 @@ let opt_encoding_and_cmd_options_from_exec_kind
         ~files
         ~oerror_label:(List.map error_label_of_simple_lbl lbls)
         sc_opt,
-      Json.Output.property_data
+      Json.Output.(cell properties)
 
   | CoverAnalysis (SimpleLabelEnv oproperties) ->
       sc_opt_to_opt
@@ -238,7 +318,7 @@ let opt_encoding_and_cmd_options_from_exec_kind
         ~ocover:"cover"
         ~files
         sc_opt,
-      Json.Output.cover_analysis_output
+      Json.Output.(cell cbmc_cover_output)
 
   | AssertAnalysis (SimpleLabelEnv oproperties) ->
       sc_opt_to_opt
@@ -246,7 +326,7 @@ let opt_encoding_and_cmd_options_from_exec_kind
         ~ofunction
         ~files
         sc_opt,
-      Json.Output.assert_analysis_output
+      Json.Output.(cell assert_analysis_result)
 
   | CLabelAnalysis (SimpleLabelEnv oprops) ->
       let oerror_label =
@@ -260,9 +340,7 @@ let opt_encoding_and_cmd_options_from_exec_kind
         ~files
         ~oerror_label
         sc_opt,
-      Json.Output.assert_analysis_output
-
-
+      Json.Output.(cell assert_analysis_result)
 
 let write_json ek ~runner_options (options : json_options) : [`json] Sc_sys.File.t Lwt.t =
   let json = Json.options options in
@@ -283,12 +361,12 @@ let err_file ek ~runner_options : [`stderr] Sc_sys.File.t Lwt.t =
   Sc_sys.File.PRETTY.assume_in ~dir:runner_options.runner_outputs
     "%u-%a-errors" runner_options.runner_iteration pp_execution_kind ek
 
-let err_json ek ~runner_options : [`stderr] Sc_sys.File.t Lwt.t =
-  Lwt.return @@
-  Sc_sys.File.PRETTY.assume_in ~dir:runner_options.runner_outputs
-    "%u-%a-json-error.json" runner_options.runner_iteration pp_execution_kind ek
+(* let err_json ek ~runner_options : [`stderr] Sc_sys.File.t Lwt.t = *)
+(*   Lwt.return @@ *)
+(*   Sc_sys.File.PRETTY.assume_in ~dir:runner_options.runner_outputs *)
+(*     "%u-%a-json-error.json" runner_options.runner_iteration pp_execution_kind ek *)
 
-let read_json_result ~outputs_json ~encoding ~errors_file ~errors_json_file =
+(* let read_json_result ~outputs_json ~encoding ~errors_file ~errors_json_file =
   let log_err json =
     let* () =
       let<* ec = errors_file in
@@ -311,54 +389,49 @@ let read_json_result ~outputs_json ~encoding ~errors_file ~errors_json_file =
       | e -> 
          Log.err "Unexpected error while reading CBMC's output";
          Lwt.reraise e
-  end
+  end *)
 
 let cbmc_start
     (type a)
-    (ek : a list exec_kind)
+    (ek : a exec_kind)
     ~(runner_options: runner_options)
-    ~(silent_kill: bool)
+    (* ~(silent_kill: bool) *)
     ~(store : Sc_store.t)
     ~(entrypoint : string)
-    ~(files : [`C] Sc_sys.File.t list) (options : OPTIONS.t)
-  : a list Lwt.t =
+    ~(files : [`C] Sc_sys.File.t list) (options : OPTIONS.t) =
   let joptions, encoding =
     opt_encoding_and_cmd_options_from_exec_kind ek entrypoint files options
   in
-  let* inputs_json = write_json ek ~runner_options joptions
-  and* outputs_json = out_json ek ~runner_options
-  and* errors_file = err_file ek ~runner_options
-  and* errors_json_file = err_json ek ~runner_options in
-  let* status =
-    cbmc_generic_process ~resdir:runner_options.runner_resdir ~store
-      ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
+  let resstream, push_in_resstream = Lwt_stream.create () in
+  let _status =
+    let* inputs_json = write_json ek ~runner_options joptions
+    and* outputs_json = out_json ek ~runner_options
+    and* errors_file = err_file ek ~runner_options in
+    cbmc_generic_process ~push_in_resstream ~resdir:runner_options.runner_resdir
+      ~store ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
   in
-  match status with                        (* Note: already reported, in logs *)
-  | Error (Unix.WSIGNALED -7) when silent_kill ->               (* Manual kill *)
-      Lwt.return []
-  | _ ->
-      read_json_result ~outputs_json ~encoding ~errors_file ~errors_json_file
+  Lwt_stream.map (Json.read_cbmc_output encoding) resstream
 
-let cbmc_get_properties ~store ~runner_options ~entrypoint ~files opt =
+let cbmc_get_properties : property list cell cbmc_run =
+  fun ~store ~runner_options ~entrypoint ~files opt ->
   cbmc_start GetProperties ~store ~runner_options ~entrypoint ~files opt
-    ~silent_kill:true
 
-let cbmc_get_cover_objectives ~store ~runner_options ~entrypoint ~files opt =
+let cbmc_get_cover_objectives : property list cell cbmc_run =
+  fun ~store ~runner_options ~entrypoint ~files opt ->
   cbmc_start GetCoverObjectives ~store ~runner_options ~entrypoint ~files opt
-    ~silent_kill:true
 
-let cbmc_get_clabels ~store ~lbls ~runner_options ~entrypoint ~files opt =
+let cbmc_get_clabels ~lbls : property list cell cbmc_run =
+  fun ~store ~runner_options ~entrypoint ~files opt ->
   cbmc_start (GetCLabels lbls) ~store ~runner_options ~entrypoint ~files opt
-    ~silent_kill:true
 
-let cbmc_cover_analysis ~store ~runner_options ~entrypoint ~files ~to_cover opt =
+let cbmc_cover_analysis ~to_cover : DATA.cbmc_cover_output DATA.cell cbmc_run =
+  fun ~store ~runner_options ~entrypoint ~files opt ->
   cbmc_start (CoverAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt
-    ~silent_kill:false
 
-let cbmc_assert_analysis ~store ~runner_options ~entrypoint ~files ~to_cover opt =
+let cbmc_assert_analysis  ~to_cover : cbmc_assert_output DATA.cell cbmc_run =
+  fun ~store ~runner_options ~entrypoint ~files opt ->
   cbmc_start (AssertAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt
-    ~silent_kill:false
 
-let cbmc_clabel_analysis ~store ~runner_options ~entrypoint ~files ~to_cover opt =
+let cbmc_clabel_analysis ~to_cover : cbmc_assert_output DATA.cell cbmc_run =
+  fun ~store ~runner_options ~entrypoint ~files opt ->
   cbmc_start (CLabelAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt
-    ~silent_kill:false

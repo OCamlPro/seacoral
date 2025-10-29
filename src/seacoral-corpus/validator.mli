@@ -54,7 +54,7 @@ val validate_n_share_raw_test
   -> toolname: string
   -> ?purpose: validation_purpose
   -> 'raw_test
-  -> unit Lwt.t
+  -> Types.test_outcome option Lwt.t
 
 (** Warning for {!validate_raw_test_string} does NOT apply. *)
 val validate_n_share_raw_test_file
@@ -63,4 +63,4 @@ val validate_n_share_raw_test_file
   -> toolname: string
   -> ?purpose: validation_purpose
   -> _ Sc_sys.File.t
-  -> unit Lwt.t
+  -> Types.test_outcome option Lwt.t

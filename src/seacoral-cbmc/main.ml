@@ -13,7 +13,6 @@ open Basics
 open Sc_core.Types
 open Types
 
-open Lwt.Infix
 open Lwt.Syntax
 open Sc_sys.File.Syntax
 
@@ -84,6 +83,35 @@ let get_properties ~(mode: Types.OPTIONS.mode) ~lbls =
   | Assert -> Runner.cbmc_get_properties
   | CLabel -> Runner.cbmc_get_clabels ~lbls
 
+let handle_cover_result
+      (type raw_test) ~(wd: raw_test working_data) (inputs, _) =
+  let params = wd.project.params in
+  let module Raw_test = (val params.test_repr) in
+  let v = Raw_test.Val.blank params.test_struct in
+  Log.info "@[<2>Blank@ built,@ assigning@ input@ %a@]\
+            " Sc_values.pp_literal_binding inputs;
+  Raw_test.Val.assign_from_literal params.typdecls v inputs;
+  let* outcome =
+    Sc_corpus.Validator.validate_n_share_raw_test wd.validator v
+      ~corpus:wd.project.corpus ~toolname
+  in
+  Log.info
+    "Test@ status:@ %a"
+    (Fmt.option
+       ~none:(fun ppf () -> Fmt.pf ppf "--none--")
+       Sc_corpus.Printer.pp_test_outcome) outcome;
+  Lwt.return ()
+
+(* Runs the validator on list of test inputs *)
+let handle_cover_results
+      (type raw_test) ~(wd: raw_test working_data)
+      test_inputs =
+  test_inputs |> (* TODO: iter_p, but with deterministic option for tests *)
+    Lwt_list.iter_s (handle_cover_result ~wd)
+
+let handle_uncoverable ~wd i = 
+  Sc_store.share_status ~toolname wd.project.store `Uncov i
+
 let start_cbmc ~wd ~to_cover =
   let files = [wd.harness_file] in
   let store = wd.project.store in
@@ -93,17 +121,46 @@ let start_cbmc ~wd ~to_cover =
   let harness = wd.harness_repr in
   match wd.opt.OPTIONS.mode with
   | Cover ->
-      Runner.cbmc_cover_analysis ~store ~runner_options
-        ~entrypoint ~files ~to_cover wd.opt >|=
-      Results.goals_to_test_cases ~env ~harness
+     let stream =
+       Runner.cbmc_cover_analysis ~store ~runner_options
+         ~entrypoint ~files ~to_cover wd.opt
+     in
+     let* () =
+       Results.goal_stream_to_test_cases
+         ~env
+         ~harness
+         ~stream
+         (handle_cover_results ~wd)
+     in
+     Lwt.return Results.empty
   | Assert ->
-      Runner.cbmc_assert_analysis ~store ~runner_options
-        ~entrypoint ~files ~to_cover wd.opt >|=
-      Results.assert_data_list_to_test_cases ~env ~harness
+     let stream =
+       Runner.cbmc_assert_analysis ~store ~runner_options
+         ~entrypoint ~files ~to_cover wd.opt in
+     let* () =
+       Results.assert_data_stream_to_test_cases
+         ~env
+         ~harness
+         ~stream
+         (function
+          | `Cov i -> handle_cover_result ~wd i
+          | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i))
+     in
+     Lwt.return Results.empty
   | CLabel ->
-      Runner.cbmc_clabel_analysis ~store ~runner_options
-        ~entrypoint ~files ~to_cover wd.opt >|=
-      Results.assert_data_list_to_test_cases ~env ~harness
+     let stream =
+       Runner.cbmc_clabel_analysis ~store ~runner_options
+         ~entrypoint ~files ~to_cover wd.opt in
+     let* () =
+       Results.assert_data_stream_to_test_cases
+         ~env
+         ~harness
+         ~stream
+         (function
+          | `Cov i -> handle_cover_result ~wd i
+          | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i))
+     in
+     Lwt.return Results.empty
 
 let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
     ~project =
@@ -131,7 +188,7 @@ let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
   Log.debug "Getting@ properties@ to@ check";
   let Sc_ltest.Types.{simpl; _} = wd.project.labels in
   let entrypoint = Harness.entrypoint wd.harness_repr in (* Name of the main function in the harness *)
-  let* data_properties =
+  let data_properties =
     get_properties
       ~mode:wd.opt.mode
       ~store:wd.project.store
@@ -141,6 +198,10 @@ let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
       ~lbls:simpl
       wd.opt
   in
+  (* We could process the payload on the fly instead of putting it in a
+     list, but the interesting data only is generated in a single cell at the
+     end. *)
+  let* data_properties = Lwt_stream.to_list data_properties in
   match List.flatten @@ Results.only_data data_properties with
   | [] when not (Sc_project.Manager.seeks_oracle_failures wd.project) ->
       Log.warn "Found@ no@ properties@ to@ verify@ on@ the@ C@ file";
@@ -189,8 +250,16 @@ let handle_properties (type raw_test) (wd: raw_test working_data)
       Log.debug "@[<2>Blank@ built,@ assigning@ input@ %a@]\
                 " Sc_values.pp_literal_binding inputs;
       Raw_test.Val.assign_from_literal params.typdecls v inputs;
-      Sc_corpus.Validator.validate_n_share_raw_test wd.validator v
-        ~corpus:wd.project.corpus ~toolname
+      let* outcome =
+        Sc_corpus.Validator.validate_n_share_raw_test wd.validator v
+          ~corpus:wd.project.corpus ~toolname
+      in
+      Log.info
+        "Test@ status:@ %a"
+        (Fmt.option
+           ~none:(fun ppf () -> Fmt.pf ppf "--none--")
+           Sc_corpus.Printer.pp_test_outcome) outcome;                          
+      Lwt.return ()
     end
   in
   (* NB: have we got any guarantee two tests in [test_inputs] are not

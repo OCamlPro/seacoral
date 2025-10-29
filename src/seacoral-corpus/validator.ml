@@ -486,9 +486,10 @@ let validate_n_share_raw_test (type raw_test) (ready_validator: raw_test ready)
     ~(corpus: raw_test Main.corpus) ~toolname ?purpose (raw_test: raw_test) =
   validate_raw_test ready_validator ?purpose raw_test >>= function
   | None ->                                 (* Valid test, but no new coverage *)
-      Lwt.return ()
+      Lwt.return None
   | Some outcome ->
-      Main.share_test' ~toolname ~outcome corpus raw_test
+     let* () = Main.share_test' ~toolname ~outcome corpus raw_test in
+     Lwt.return (Some outcome)
 
 (** Warning for {!validate_raw_test_string} does NOT apply. *)
 let validate_n_share_raw_test_file (type raw_test) (ready_validator: raw_test ready)
@@ -496,9 +497,12 @@ let validate_n_share_raw_test_file (type raw_test) (ready_validator: raw_test re
   let module Raw_test = (val ready_validator.validator.params.test_repr) in
   validate_raw_test_file ready_validator ?purpose file >>= function
   | None ->                                 (* Valid test, but no new coverage *)
-      Lwt.return ()
+      Lwt.return None
   | Some outcome ->
       let* test_str = Sc_sys.Lwt_file.read file in
-      Main.share_test' ~toolname ~outcome corpus @@
-      Raw_test.Val.of_string ready_validator.validator.params.test_struct
-        test_str
+      let* () =
+        Main.share_test' ~toolname ~outcome corpus @@
+          Raw_test.Val.of_string ready_validator.validator.params.test_struct
+            test_str
+      in
+      Lwt.return (Some outcome)

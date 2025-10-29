@@ -115,6 +115,15 @@ let fold_on_data ?with_print:_ f acc data_list =
     acc
     data_list
 
+let iter_on_data_stream ?with_print:_ data_stream f =
+  Lwt_stream.iter_p
+    (function
+     | (DATA.ProgramInfo _ | Message _ | CProverStatus _) as d ->
+        Log.debug "%a" (Printer.pp_cell ~pp_data:(fun _ -> ignore)) d;
+        Lwt.return ()
+     | Data data -> f data)
+    data_stream
+
 let only_data (cells : 'a DATA.cell list) : 'a list =
   fold_on_data
     (fun acc d -> d :: acc)
@@ -148,6 +157,24 @@ let goals_to_test_cases
     empty
     output
 
+let goal_stream_to_test_cases ~env ~harness ~stream kont =
+  iter_on_data_stream ~with_print:Printer.pp_cbmc_cover_output stream
+    (function
+     | DATA.Goals goal_details ->
+        Log.debug "Goal covered: %i" goal_details.gdgoals_covered;
+        Lwt.return ()
+     | Tests t ->
+        Log.debug "#tests: %i" (List.length t);
+        let new_tests =
+          List.map (fun i ->
+              (* Log.debug "Test: %a" pp_test i; *)
+              let test = Harness.test_to_literal harness i in
+              let covered = covered_goals_of_test env i in
+              test, covered
+            ) t
+        in
+        kont new_tests)
+
 (* First, reads the trace until it reaches an invalid assertion that does not
    correspond to a label and accumulates the labels covered by the trace.
    Then, if there is at least one label covered by the trace before the assertion
@@ -156,7 +183,6 @@ let goals_to_test_cases
 let variable_assigns_from_trace
     (harness : Harness.t)
     (env: simple_label_env)
-    (cr : t)
     (trace : DATA.instruction list) : (Sc_values.literal_binding * Ints.t) option =
   let rec check_trace covered = function
     | [] ->
@@ -186,8 +212,8 @@ let variable_assigns_from_trace
     | _ :: tl -> check_trace covered tl
   in
   match check_trace Ints.empty trace with
-  | Some covered when not (Ints.subset covered (get_covered cr)) ->
-      Some ((Harness.trace_to_literal harness trace), covered)
+  | Some covered ->
+     Some ((Harness.trace_to_literal harness trace), covered)
   | _ ->
       None
 
@@ -199,21 +225,20 @@ let property_and_lbl_of_ac (env: simple_label_env) (ac : DATA.assertion_check)
 let treat_counter_example
     (harness : Harness.t)
     (env: simple_label_env)
-    (cr : t)
-    (ac : DATA.assertion_check) =
+    actrace =
   (* Log.debug "Handling counter example %s" ac.acdescription; *)
-  match ac.actrace with
+  match actrace with
   | None -> (* invalid_trace ~trace:[] ~prop:ac.acproperty ~reason:"Counter example without a trace" *)
       failwith "TODO: invalid_trace"
   | Some trace ->
-      match variable_assigns_from_trace harness env cr trace with
+      match variable_assigns_from_trace harness env trace with
       | None -> (* No interesting trace deduced from  *)
-          cr
+          None
       | Some (test, covered) ->
           Log.debug "@[<2>Test@ covering@ labels@ %a:@;%a@]"
             Ints.print covered
             Sc_values.pp_literal_binding test;
-          add_tests [test, covered] cr
+          Some (test, covered)
       | exception (UNKNOWN_PROPERTY pname) ->
          (* We reached a property that was not registered as such previously.
             Discarding the counter example for safety.
@@ -222,7 +247,7 @@ let treat_counter_example
          Log.err
            "Property@ %s@ is@ unknown. Discarding the counter-example"
            pname;
-         cr
+         None
 
 let generic_assertion_check_property (ac: DATA.assertion_check) (cr: t) =
   match ac.acstatus with
@@ -247,17 +272,54 @@ let assertion_check_to_result (harness: Harness.t) (env: simple_label_env)
           Log.debug "Label %i is unreachable" (Sc_C.Cov_label.id sl);
           (* We could check now that non_valid_extra_properties is empty or not. *)
           add_uncoverable sl cr
-      | Failure_ ->
+      | Failure_ -> (
           Log.debug "Label %i (%s) is reachable:@ handling counter-example\
                     " (Sc_C.Cov_label.id sl) property.pname;
           (* A counter-example has been found for the label's negation: it is reachable *)
-          treat_counter_example harness env cr ac
+          match treat_counter_example harness env ac.actrace with
+          | None -> cr
+          | Some v -> add_tests [v] cr
+      )
       | Unknown s ->
           Log.debug "Unkwown status (%s) of label %s" s ac.acdescription;
           cr
 
 let assert_data_list_to_test_cases ~env ~harness l : t =
   fold_on_data ~with_print:Printer.pp_cbmc_assert_output
-    (fun acc adata -> List.fold_left (assertion_check_to_result harness env) acc adata)
+    (fun acc adata ->
+      List.fold_left (assertion_check_to_result harness env) acc adata)
     empty
     l
+
+let assert_data_stream_to_test_cases ~env ~harness ~stream kont =
+  iter_on_data_stream
+    ~with_print:Printer.pp_cbmc_cover_output
+    stream
+    (Lwt_list.iter_s (fun ac ->
+         match property_and_lbl_of_ac env ac with
+         | None -> ( (* Not a pclabel *)
+           match ac.acstatus with
+           | Success -> Lwt.return ()
+           | Failure_ | Unknown _ ->
+              Log.debug "Property@ %s@ is@ invalid:@;ignoring" ac.acproperty;
+              Lwt.return ()
+         )
+         | Some (property, sl) ->
+            match ac.acstatus with
+            | Success ->
+               let id = Sc_C.Cov_label.id sl in
+               Log.debug "Label %i is unreachable" id;
+               (* We could check now that non_valid_extra_properties is empty or not. *)
+               kont (`Uncov id)
+            | Failure_ -> (
+              Log.debug "Label %i (%s) is reachable:@ handling counter-example\
+                         " (Sc_C.Cov_label.id sl) property.pname;
+              (* A counter-example has been found for the label's negation: it is reachable *)
+              match treat_counter_example harness env ac.actrace with
+              | None -> Lwt.return ()
+              | Some r -> kont (`Cov r)
+            )
+            | Unknown s ->
+               Log.debug "Unkwown status (%s) of label %s" s ac.acdescription;
+               Lwt.return ())
+    )

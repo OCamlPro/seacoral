@@ -36,6 +36,7 @@ module Output : sig
   val goals_details : goals_details encoding
   val cbmc_cover_output : cbmc_cover_output encoding
   val cover_analysis_output : cbmc_cover_output cell list encoding
+  val assert_analysis_result : cbmc_assert_output encoding
   val assert_analysis_output : cbmc_assert_output cell list encoding
   val assignment : assignment encoding
 end
