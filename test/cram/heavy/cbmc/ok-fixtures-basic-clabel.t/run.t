@@ -50,9 +50,9 @@ TODO: here we'd like CBMC to find a test that fails the oracle:
   [A]{Sc} Extracting new testcases from corpus...
   [A]{Sc} Hard work done
   [A]{Sc} Coverage statistics for `neg':
-          cov: 0 (0.0%) uncov: 0 (0.0%) unkwn: 2 (100.0%) with 0 test
+          cov: 0 (0.0%) uncov: 1 (50.0%) unkwn: 1 (50.0%) with 0 test
   [A]{Sc} Covered labels: {}
-  [A]{Sc} Uncoverable labels: {}
+  [A]{Sc} Uncoverable labels: {2}
   [A]{Sc} Crash statistics: rte: none
   [A]{Sc} Oracle statistics: fails: none
   [A]{Sc}        1: Unknown
