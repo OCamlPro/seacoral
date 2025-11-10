@@ -224,10 +224,7 @@ let cbmc_generic_process
       ~handle_json_object:(fun json -> push_in_resstream (Some json))
   in
   let* _cancel_kill =
-    Sc_store.on_termination store ~h:(fun _ ->
-        Log.err "Process end";
-        push_in_resstream None;
-        Sc_sys.Process.terminate proc)
+    Sc_store.on_termination store ~h:(fun _ -> Sc_sys.Process.terminate proc)
   in
   Sc_sys.Process.join proc
 
