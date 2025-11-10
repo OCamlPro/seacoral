@@ -125,42 +125,33 @@ let start_cbmc ~wd ~to_cover =
        Runner.cbmc_cover_analysis ~store ~runner_options
          ~entrypoint ~files ~to_cover wd.opt
      in
-     let* () =
-       Results.goal_stream_to_test_cases
-         ~env
-         ~harness
-         ~stream
-         (handle_cover_results ~wd)
-     in
-     Lwt.return Results.empty
+     Results.goal_stream_to_test_cases
+       ~env
+       ~harness
+       ~stream
+       (handle_cover_results ~wd)
   | Assert ->
      let stream =
        Runner.cbmc_assert_analysis ~store ~runner_options
          ~entrypoint ~files ~to_cover wd.opt in
-     let* () =
-       Results.assert_data_stream_to_test_cases
-         ~env
-         ~harness
-         ~stream
-         (function
-          | `Cov i -> handle_cover_result ~wd i
-          | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i))
-     in
-     Lwt.return Results.empty
+     Results.assert_data_stream_to_test_cases
+       ~env
+       ~harness
+       ~stream
+       (function
+        | `Cov i -> handle_cover_result ~wd i
+        | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i))
   | CLabel ->
      let stream =
        Runner.cbmc_clabel_analysis ~store ~runner_options
          ~entrypoint ~files ~to_cover wd.opt in
-     let* () =
-       Results.assert_data_stream_to_test_cases
-         ~env
-         ~harness
-         ~stream
-         (function
-          | `Cov i -> handle_cover_result ~wd i
-          | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i))
-     in
-     Lwt.return Results.empty
+     Results.assert_data_stream_to_test_cases
+       ~env
+       ~harness
+       ~stream
+       (function
+        | `Cov i -> handle_cover_result ~wd i
+        | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i))
 
 let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
     ~project =
@@ -239,29 +230,6 @@ let handle_properties (type raw_test) (wd: raw_test working_data)
   let test_inputs = Results.get_tests cr in
   Log.info "Covered: %a" Ints.print covered;
   Log.info "Uncoverable: %a" Ints.print uncoverable;
-  let* () =
-    Sc_store.share_status ~toolname wd.project.store `Uncov uncoverable
-  and* () =
-    let params = wd.project.params in
-    let module Raw_test = (val params.test_repr) in
-    test_inputs |> (* TODO: iter_p, but with deterministic option for tests *)
-    Lwt_list.iter_s begin fun (inputs, _) ->
-      let v = Raw_test.Val.blank params.test_struct in
-      Log.debug "@[<2>Blank@ built,@ assigning@ input@ %a@]\
-                " Sc_values.pp_literal_binding inputs;
-      Raw_test.Val.assign_from_literal params.typdecls v inputs;
-      let* outcome =
-        Sc_corpus.Validator.validate_n_share_raw_test wd.validator v
-          ~corpus:wd.project.corpus ~toolname
-      in
-      Log.info
-        "Test@ status:@ %a"
-        (Fmt.option
-           ~none:(fun ppf () -> Fmt.pf ppf "--none--")
-           Sc_corpus.Printer.pp_test_outcome) outcome;                          
-      Lwt.return ()
-    end
-  in
   (* NB: have we got any guarantee two tests in [test_inputs] are not
      equivalent? *)
   (* TODO: actually measure these stats at the other end of the sharing

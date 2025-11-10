@@ -10,6 +10,7 @@
 
 open Basics
 open Types
+open Lwt.Syntax
 
 module Log =
   (val (Ez_logs.from_src @@
@@ -115,14 +116,15 @@ let fold_on_data ?with_print:_ f acc data_list =
     acc
     data_list
 
-let iter_on_data_stream ?with_print:_ data_stream f =
-  Lwt_stream.iter_p
-    (function
+let fold_on_data_stream ?with_print:_ data_stream f acc =
+  Lwt_stream.fold_s
+    (fun v acc -> match v with
      | (DATA.ProgramInfo _ | Message _ | CProverStatus _) as d ->
         Log.debug "%a" (Printer.pp_cell ~pp_data:(fun _ -> ignore)) d;
-        Lwt.return ()
-     | Data data -> f data)
+        Lwt.return acc
+     | Data data -> f acc data)
     data_stream
+    acc
 
 let only_data (cells : 'a DATA.cell list) : 'a list =
   fold_on_data
@@ -130,50 +132,27 @@ let only_data (cells : 'a DATA.cell list) : 'a list =
     []
     cells
 
-(* Returns the list of tests from a coverage CBMC analysis. *)
-let goals_to_test_cases
-    ~env ~harness
-    output =
-  fold_on_data ~with_print:Printer.pp_cbmc_cover_output
-    (fun
-      (acc : t)
-      (cco : DATA.cbmc_cover_output) : t ->
-      match cco with
-      | Goals goal_details ->
-          Log.debug "Goal covered: %i" goal_details.gdgoals_covered;
-          acc
+let goal_stream_to_test_cases ~env ~harness ~stream kont =
+  fold_on_data_stream
+    ~with_print:Printer.pp_cbmc_cover_output
+    stream
+    (fun acc -> function
+      | DATA.Goals goal_details ->
+         Log.debug "Goal covered: %i" goal_details.gdgoals_covered;
+         Lwt.return acc
       | Tests t ->
-          Log.debug "#goals: %i" (List.length t);
-          let new_tests =
-            List.map (fun i ->
-                (* Log.debug "Test: %a" pp_test i; *)
-                let test = Harness.test_to_literal harness i in
-                let covered = covered_goals_of_test env i in
-                test, covered
-              ) t
-          in
-          add_tests new_tests acc
+         Log.debug "#tests: %i" (List.length t);
+         let new_tests =
+           List.map (fun i ->
+               let test = Harness.test_to_literal harness i in
+               let covered = covered_goals_of_test env i in
+               test, covered
+             ) t
+         in
+         let* () = kont new_tests in
+         Lwt.return @@ add_tests new_tests acc
     )
     empty
-    output
-
-let goal_stream_to_test_cases ~env ~harness ~stream kont =
-  iter_on_data_stream ~with_print:Printer.pp_cbmc_cover_output stream
-    (function
-     | DATA.Goals goal_details ->
-        Log.debug "Goal covered: %i" goal_details.gdgoals_covered;
-        Lwt.return ()
-     | Tests t ->
-        Log.debug "#tests: %i" (List.length t);
-        let new_tests =
-          List.map (fun i ->
-              (* Log.debug "Test: %a" pp_test i; *)
-              let test = Harness.test_to_literal harness i in
-              let covered = covered_goals_of_test env i in
-              test, covered
-            ) t
-        in
-        kont new_tests)
 
 (* First, reads the trace until it reaches an invalid assertion that does not
    correspond to a label and accumulates the labels covered by the trace.
@@ -249,77 +228,43 @@ let treat_counter_example
            pname;
          None
 
-let generic_assertion_check_property (ac: DATA.assertion_check) (cr: t) =
-  match ac.acstatus with
-  | Success -> cr
-  | Failure_
-  | Unknown _ ->
-      Log.debug "Property@ %s@ is@ invalid:@;ignoring" ac.acproperty;
-      add_non_valid_extra_property ac cr
-
-let assertion_check_to_result (harness: Harness.t) (env: simple_label_env)
-    (cr: t) (ac : DATA.assertion_check) : t =
-  match property_and_lbl_of_ac env ac with
-  | None -> (* Not a pclabel *)
-      generic_assertion_check_property ac cr
-  | Some (_, lbl) when Ints.mem (Sc_C.Cov_label.id lbl) (get_covered cr) ->
-      (* Log.debug "Label already handled"; *)
-      (* Already treated *)
-      cr
-  | Some (property, sl) ->
-      match ac.acstatus with
-      | Success ->
-          Log.debug "Label %i is unreachable" (Sc_C.Cov_label.id sl);
-          (* We could check now that non_valid_extra_properties is empty or not. *)
-          add_uncoverable sl cr
-      | Failure_ -> (
-          Log.debug "Label %i (%s) is reachable:@ handling counter-example\
-                    " (Sc_C.Cov_label.id sl) property.pname;
-          (* A counter-example has been found for the label's negation: it is reachable *)
-          match treat_counter_example harness env ac.actrace with
-          | None -> cr
-          | Some v -> add_tests [v] cr
-      )
-      | Unknown s ->
-          Log.debug "Unkwown status (%s) of label %s" s ac.acdescription;
-          cr
-
-let assert_data_list_to_test_cases ~env ~harness l : t =
-  fold_on_data ~with_print:Printer.pp_cbmc_assert_output
-    (fun acc adata ->
-      List.fold_left (assertion_check_to_result harness env) acc adata)
-    empty
-    l
-
 let assert_data_stream_to_test_cases ~env ~harness ~stream kont =
-  iter_on_data_stream
+  fold_on_data_stream
     ~with_print:Printer.pp_cbmc_cover_output
     stream
-    (Lwt_list.iter_s (fun ac ->
-         match property_and_lbl_of_ac env ac with
-         | None -> ( (* Not a pclabel *)
-           match ac.acstatus with
-           | Success -> Lwt.return ()
-           | Failure_ | Unknown _ ->
-              Log.debug "Property@ %s@ is@ invalid:@;ignoring" ac.acproperty;
-              Lwt.return ()
-         )
-         | Some (property, sl) ->
+    (fun (acc : t) l ->
+      Lwt_list.fold_left_s
+        (fun (acc : t) ac ->
+          match property_and_lbl_of_ac env ac with
+          | None -> ( (* Not a pclabel *)
             match ac.acstatus with
-            | Success ->
-               let id = Sc_C.Cov_label.id sl in
-               Log.debug "Label %i is unreachable" id;
-               (* We could check now that non_valid_extra_properties is empty or not. *)
-               kont (`Uncov id)
-            | Failure_ -> (
-              Log.debug "Label %i (%s) is reachable:@ handling counter-example\
-                         " (Sc_C.Cov_label.id sl) property.pname;
-              (* A counter-example has been found for the label's negation: it is reachable *)
-              match treat_counter_example harness env ac.actrace with
-              | None -> Lwt.return ()
-              | Some r -> kont (`Cov r)
-            )
-            | Unknown s ->
-               Log.debug "Unkwown status (%s) of label %s" s ac.acdescription;
-               Lwt.return ())
+            | Success -> Lwt.return acc
+            | Failure_ | Unknown _ ->
+               Log.debug "Property@ %s@ is@ invalid:@;ignoring" ac.acproperty;
+               Lwt.return @@ add_non_valid_extra_property ac acc
+          )
+          | Some (property, sl) ->
+             match ac.acstatus with
+             | Success ->
+                let id = Sc_C.Cov_label.id sl in
+                Log.debug "Label %i is unreachable" id;
+                (* We could check now that non_valid_extra_properties is empty or not. *)
+                let* () = kont (`Uncov id) in
+                Lwt.return @@ add_uncoverable sl acc         
+             | Failure_ -> (
+               Log.debug "Label %i (%s) is reachable:@ handling counter-example\
+                          " (Sc_C.Cov_label.id sl) property.pname;
+               (* A counter-example has been found for the label's negation: it is reachable *)
+               match treat_counter_example harness env ac.actrace with
+               | None -> Lwt.return acc
+               | Some r ->
+                  let* () = kont (`Cov r) in
+                  Lwt.return @@ add_tests [r] acc
+             )
+             | Unknown s ->
+                Log.debug "Unkwown status (%s) of label %s" s ac.acdescription;
+                Lwt.return acc)
+        acc
+        l
     )
+    empty
