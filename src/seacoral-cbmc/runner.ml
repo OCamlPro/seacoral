@@ -135,12 +135,10 @@ let treat_cbmc_output_stream
   let json = Buffer.create 42 in
   let fmt = Format.formatter_of_buffer json in
   let parenthesis_depth = ref 0 in
-  (* Lwt.async (fun () -> *)
   Lwt.catch (fun () ->
       Lwt_stream.iter_s
         (fun l ->
           let* () = handle_line l in
-          (* let* () = Lwt_io.write_line output_chan l in *)
           let l_no_space = String.trim l in
           let () =
             if l_no_space = "" then ()
@@ -176,7 +174,6 @@ let treat_cbmc_output_stream
     (function
      | Lwt_io.Channel_closed _ -> Lwt.return ()
      | exn -> Lwt.reraise exn)
-    (* ) *)
 
 let cbmc_generic_process
     ~push_in_resstream
@@ -210,9 +207,7 @@ let cbmc_generic_process
       ~on_success:(fun () -> close_stream (); Lwt.return_ok ())
       ~on_error:(fun e -> close_stream (); Lwt.return_error e)
   in
-  (* let* _one = Lwt_unix.write outputs_fd (Bytes.of_string "[") 0 1 in *)
   let _ : unit Lwt.t =
-    (* push_in_resstream None; *)
     treat_cbmc_output_stream
       ~stream:(Sc_sys.Process.stdout_lines proc)
       ~handle_line:(fun l ->
@@ -361,41 +356,10 @@ let err_file ek ~runner_options : [`stderr] Sc_sys.File.t Lwt.t =
   Sc_sys.File.PRETTY.assume_in ~dir:runner_options.runner_outputs
     "%u-%a-errors" runner_options.runner_iteration pp_execution_kind ek
 
-(* let err_json ek ~runner_options : [`stderr] Sc_sys.File.t Lwt.t = *)
-(*   Lwt.return @@ *)
-(*   Sc_sys.File.PRETTY.assume_in ~dir:runner_options.runner_outputs *)
-(*     "%u-%a-json-error.json" runner_options.runner_iteration pp_execution_kind ek *)
-
-(* let read_json_result ~outputs_json ~encoding ~errors_file ~errors_json_file =
-  let log_err json =
-    let* () =
-      let<* ec = errors_file in
-      Lwt_stream.iter_s (Log.LWT.err "stderr: %s") @@ Lwt_io.read_lines ec
-    in
-    Sc_sys.Lwt_file.write errors_json_file json
-  in
-  Lwt.catch begin fun () ->
-    let* json_string = let<* ic = outputs_json in Lwt_io.read ic in
-    Lwt.return @@ Json.read_cbmc_output encoding json_string
-    end begin function
-      | (FAILED_JSON_PARSING {exn = _; json} as e) ->
-         Log.err "Error while parsing CBMC's output";
-         let* () = log_err json in
-         Lwt.reraise e
-      | (FAILED_JSON_DESTRUCT {exn = _; json} as e) ->
-         Log.err "Error while destructing CBMC's output";
-         let* () = log_err json in
-         Lwt.reraise e
-      | e -> 
-         Log.err "Unexpected error while reading CBMC's output";
-         Lwt.reraise e
-  end *)
-
 let cbmc_start
     (type a)
     (ek : a exec_kind)
     ~(runner_options: runner_options)
-    (* ~(silent_kill: bool) *)
     ~(store : Sc_store.t)
     ~(entrypoint : string)
     ~(files : [`C] Sc_sys.File.t list) (options : OPTIONS.t) =
