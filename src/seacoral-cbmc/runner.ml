@@ -56,21 +56,49 @@ let property_belongs_to_file ~file prop =
   Filename.basename prop.psource_location.slfile =
   Sc_sys.File.basename file
 
-let id_from_property_name prop =
-  match String.split_on_char '.' prop.pname with
-  | [fname; kind; id] -> fname, kind, int_of_string id
-  | _ -> assert false
-
-let empty_env =
-  { extra_required_properties = [];
-    proof_objectives = PropertyMap.empty;
-    already_proven = PropertyMap.empty }
-
 let property_kind_matches_mode ~mode ~kind =
   match mode with
   | OPTIONS.Cover -> kind = "coverage"
   | Assert -> kind = "assertion"
   | CLabel -> kind = "error_label"
+
+let info_from_property_name prop =
+    match String.split_on_char '.' prop.pname with
+    | [fname; kind; id] -> fname, kind, int_of_string id
+    | _ -> Fmt.failwith "CBMC property name %S expected to be of the form [entrypoint].[kind].[id]." prop.pname 
+
+let id_from_assert_property_descr prop =
+  match String.split_on_char '.' prop.pdescription with
+  | [ "__sc_assertion"; id ] -> Some (int_of_string id)
+  | _ -> None
+
+let info_from_property
+      ~harness_file (* File where the labels are put *)
+      ~labelized_file (* Labelized file *)
+      ~entrypoint (* Name of the harness entrypoint (not the analyzed function) *)
+      ~mode
+      prop =
+  if property_belongs_to_file ~file:labelized_file prop then
+    `ExtraProperty
+  else if (property_belongs_to_file ~file:harness_file prop) then
+    let fname, kind, id = info_from_property_name prop in
+    if fname <> entrypoint || not (property_kind_matches_mode ~mode ~kind) then
+      `ExtraProperty
+    else if mode = Assert then begin
+        (* Sometimes, seacoral adds extra assertions, which makes the [id] from the
+           prop.name not the correct one. *)
+        match id_from_assert_property_descr prop with
+        | None -> `DiscardProperty
+        | Some id -> `Label id
+      end
+    else `Label id
+  else
+    `DiscardProperty
+
+let empty_env =
+  { extra_required_properties = [];
+    proof_objectives = PropertyMap.empty;
+    already_proven = PropertyMap.empty }
 
 (* Takes the list of properties returned by cbmc with the option --show-properties and
    returns the associated proof objectives (the labels to cover). *)
@@ -92,38 +120,26 @@ let uncovered_properties
   let env =
     List.fold_left begin fun env prop ->
       (* Log.debug "Property %a" Printer.pp_property prop; *)
-      let fname, kind, lbl_id = id_from_property_name prop in
-      Log.debug "Property@ %s.%i@ of@ kind@ %s" fname lbl_id kind; 
-      (* Checking if the property belongs to the main file and the main function. *)
-      if not (property_kind_matches_mode ~mode ~kind) then
-        { env with
-          extra_required_properties = prop :: env.extra_required_properties }
-      else if property_belongs_to_file ~file:harness_file prop && fname = entrypoint then
-        (* Probably unsafe *)
-        match Basics.IntMap.find_opt lbl_id lbl_map with
-        | None ->                                               (* not a label *)
+      match info_from_property ~harness_file ~labelized_file ~entrypoint ~mode prop with
+      | `DiscardProperty -> Log.debug "Discarding@ property@ %s" prop.pname; env
+      | `ExtraProperty ->
+         { env with
+           extra_required_properties = prop :: env.extra_required_properties }
+      | `Label lbl_id ->
+         match Basics.IntMap.find_opt lbl_id lbl_map with
+         | None ->                                              (* not a label *)
+            Log.warn "Property %s read as a label, but not in the label map. \
+                      This should not occur." prop.pname;
             { env with
               extra_required_properties = prop :: env.extra_required_properties }
-        | Some lbl when
-               Sc_C.Cov_label.is_unknown lbl &&
-               not (Basics.Ints.mem lbl_id already_decided) ->(* unknown status *)
+         | Some lbl when
+                Sc_C.Cov_label.is_unknown lbl &&
+                  not (Basics.Ints.mem lbl_id already_decided) ->(* unknown status *)
             { env with
               proof_objectives = PropertyMap.add prop lbl env.proof_objectives }
-        | Some lbl ->                                          (* known status *)
+         | Some lbl ->                                          (* known status *)
             { env with
               already_proven = PropertyMap.add prop lbl env.already_proven }
-      else if property_belongs_to_file ~file:labelized_file prop then
-        { env with
-          extra_required_properties = prop :: env.extra_required_properties }
-      else begin
-        (* We discard properties that are not in the entrypoint function. *)
-        Log.debug "Discarding@ property@ %s:@;source@ files@ differ@ \
-                   (@[%s@ <>@ %s)@]"
-          prop.pname
-          prop.psource_location.slfile
-          (Sc_sys.File.name labelized_file);
-        env
-      end
     end empty_env cbmc_props
   in
   SimpleLabelEnv env
