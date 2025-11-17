@@ -18,12 +18,13 @@ open Lwt.Syntax
 type 'a process_result = 'a
 
 type 'a cbmc_run =
+  kont:('a -> unit Lwt.t) ->
   store:Sc_store.t ->
   runner_options:runner_options ->
   entrypoint:string ->
   files:[ `C ] Sc_sys.File.t list ->
   OPTIONS.t ->
-  'a Lwt_stream.t
+  unit Lwt.t
 
 (* --- *)
 
@@ -144,10 +145,20 @@ let uncovered_properties
   in
   SimpleLabelEnv env
 
+(* [treat_cbmc_output_stream ~stream ~on_stream_end ~handle_line ~handle_json_object]
+
+   Reads the stream contents, expecting it to be an array of json objects (the
+   output format of CBMC). Each element of the stream is logged by [handle_line]
+   and, when a json object of the array is fully parsed, it is treated by
+   [handle_json_object].
+   When the array finishes, [on_stream_end] is called.   
+ *)
 let treat_cbmc_output_stream
       ~stream
+      ~on_stream_end
       ~handle_line
       ~handle_json_object =
+  let exception StreamEnd in
   let json = Buffer.create 42 in
   let fmt = Format.formatter_of_buffer json in
   let parenthesis_depth = ref 0 in
@@ -165,16 +176,19 @@ let treat_cbmc_output_stream
                  String.iter
                    (fun c ->
                      match c with
-                     | '{' ->
+                     | '{' | '[' ->
                         incr parenthesis_depth;
                         Format.pp_print_char fmt c;
-                     | '}' ->
+                     | ']' when !parenthesis_depth = 1 ->
+                        raise StreamEnd
+                     | '}' | ']' ->
                         decr parenthesis_depth;
                         Format.pp_print_char fmt c;
                         if !parenthesis_depth = 1 then
                           begin
                             Format.pp_print_flush fmt ();
-                            handle_json_object (Buffer.contents json);
+                            let j = Buffer.contents json in
+                            Lwt.async (fun () -> handle_json_object j);
                             Buffer.clear json
                           end
                      | ',' when !parenthesis_depth = 1 -> ()
@@ -188,17 +202,18 @@ let treat_cbmc_output_stream
         stream
     )
     (function
-     | Lwt_io.Channel_closed _ -> Lwt.return ()
+     | StreamEnd -> on_stream_end (); Lwt.return ()
      | exn -> Lwt.reraise exn)
 
 let cbmc_generic_process
-    ~push_in_resstream
+    ~encoding
     ~resdir
     ~timeout
     ~(inputs_json : [>`json] Sc_sys.File.t)
     ~(outputs_json : [>`json] Sc_sys.File.t)
     ~(errors_file : _ Sc_sys.File.t)
-    ~(store : Sc_store.t) : _ result Lwt.t =
+    ~(store : Sc_store.t)
+    ~kont : unit Lwt.t =
   let* inputs_fd =
     Log.debug "input: `%a'" Sc_sys.File.print inputs_json;
     Sc_sys.Lwt_file.descriptor inputs_json [O_RDONLY] 0       (* perm. unused *)
@@ -209,7 +224,9 @@ let cbmc_generic_process
     Log.debug "errors: `%a'" Sc_sys.File.print errors_file;
     Sc_sys.Lwt_file.descriptor errors_file [O_WRONLY; O_CREAT; O_TRUNC] 0o600
   in
-  let close_stream () = push_in_resstream None in
+  (* The stream in which we will write the process' stdout. *)
+  let working_json_stream, push_on_working_stream = Lwt_stream.create () in
+  let redirect_line l = push_on_working_stream (Some l); Lwt.return () in
   let* proc =
     Sc_sys.Process.exec
       Sc_sys.Ezcmd.Std.(make "cbmc" |>
@@ -217,32 +234,38 @@ let cbmc_generic_process
                         rawf "-I%a" Sc_sys.File.print resdir |>
                         to_cmd)
       ~stdin:(`FD_move (Lwt_unix.unix_file_descr inputs_fd))
-      ~stdout:`Keep
+      ~stdout:(`Grab (Lines redirect_line))
       ~stderr:(`FD_move (Lwt_unix.unix_file_descr errors_fd))
       ~timeout
-      ~on_success:(fun () -> close_stream (); Lwt.return_ok ())
-      ~on_error:(fun e -> close_stream (); Lwt.return_error e)
-  in
-  let _ : unit Lwt.t =
-    treat_cbmc_output_stream
-      ~stream:(Sc_sys.Process.stdout_lines proc)
-      ~handle_line:(fun l ->
-        let b = Bytes.of_string (l ^ "\n") in
-        let len = Bytes.length b in
-        let () =
-          Lwt.async (fun () ->
-              let* _len_w = Lwt_unix.write outputs_fd b 0 len in
-              Lwt.return ()
-            )
-        in
-        Lwt.return ()
-      )
-      ~handle_json_object:(fun json -> push_in_resstream (Some json))
+      ~on_success:(fun () -> Lwt.return_ok ())
+      ~on_error:(fun e -> Lwt.return_error e)
   in
   let* _cancel_kill =
     Sc_store.on_termination store ~h:(fun _ -> Sc_sys.Process.terminate proc)
   in
-  Sc_sys.Process.join proc
+  let () =
+    Lwt.async (fun () ->
+        treat_cbmc_output_stream
+          ~on_stream_end:(fun () -> push_on_working_stream None)
+          ~stream:working_json_stream
+          ~handle_line:(fun l ->
+            let b = Bytes.of_string (l ^ "\n") in
+            let len = Bytes.length b in
+            let () =
+              Lwt.async (fun () ->
+                  let* _len_w = Lwt_unix.write outputs_fd b 0 len in
+                  Lwt.return ()
+                )
+            in
+            Lwt.return ()
+          )
+          ~handle_json_object:(fun json ->
+            Json.read_cbmc_output encoding json |> kont
+          )
+      )
+  in
+  (* We return once the stream is closed. *)
+  Lwt_stream.closed working_json_stream
 
 (* From the lannot label identifier, returns the corresponding error label for CBMC *)
 let label_of pp s = Format.asprintf "sc_label%a" pp s (* Defined in cbmc_label_driver.h *)
@@ -375,40 +398,38 @@ let cbmc_start
     ~(runner_options: runner_options)
     ~(store : Sc_store.t)
     ~(entrypoint : string)
-    ~(files : [`C] Sc_sys.File.t list) (options : OPTIONS.t) =
+    ~(files : [`C] Sc_sys.File.t list)
+    ~(kont : a -> unit Lwt.t)
+    (options : OPTIONS.t) =
   let joptions, encoding =
     opt_encoding_and_cmd_options_from_exec_kind ek entrypoint files options
   in
-  let resstream, push_in_resstream = Lwt_stream.create () in
-  let _status =
-    let* inputs_json = write_json ek ~runner_options joptions
-    and* outputs_json = out_json ek ~runner_options
-    and* errors_file = err_file ek ~runner_options in
-    cbmc_generic_process ~push_in_resstream ~resdir:runner_options.runner_resdir
-      ~store ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
-  in
-  Lwt_stream.map (Json.read_cbmc_output encoding) resstream
+  let* inputs_json = write_json ek ~runner_options joptions
+  and* outputs_json = out_json ek ~runner_options
+  and* errors_file = err_file ek ~runner_options in
+  cbmc_generic_process ~encoding ~kont ~resdir:runner_options.runner_resdir
+    ~store ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
 
-let cbmc_get_properties : property list cell cbmc_run =
-  fun ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start GetProperties ~store ~runner_options ~entrypoint ~files opt
+let cbmc_get_properties  : property list cell cbmc_run =
+  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start GetProperties ~kont ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_get_cover_objectives : property list cell cbmc_run =
-  fun ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start GetCoverObjectives ~store ~runner_options ~entrypoint ~files opt
+  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start GetCoverObjectives ~kont ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_get_clabels ~lbls : property list cell cbmc_run =
-  fun ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start (GetCLabels lbls) ~store ~runner_options ~entrypoint ~files opt
+  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start (GetCLabels lbls) ~kont ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_cover_analysis ~to_cover : DATA.cbmc_cover_output DATA.cell cbmc_run =
-  fun ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start (CoverAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt
+  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start (CoverAnalysis to_cover) ~kont ~store ~runner_options ~entrypoint ~files opt
 
-let cbmc_assert_analysis  ~to_cover : cbmc_assert_output DATA.cell cbmc_run =
-  fun ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start (AssertAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt
+let cbmc_assert_analysis ~to_cover : cbmc_assert_output DATA.cell cbmc_run =
+  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start (AssertAnalysis to_cover) ~kont ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_clabel_analysis ~to_cover : cbmc_assert_output DATA.cell cbmc_run =
-  fun ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start (CLabelAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt
+  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start (CLabelAnalysis to_cover) ~kont ~store ~runner_options ~entrypoint ~files opt

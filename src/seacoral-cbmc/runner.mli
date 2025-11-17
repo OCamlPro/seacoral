@@ -17,12 +17,13 @@ open Sc_sys.File.TYPES
 type 'a process_result = 'a                                  (* always provided *)
 
 type 'a cbmc_run =
+  kont:('a -> unit Lwt.t) ->
   store:Sc_store.t ->
   runner_options:runner_options ->
   entrypoint:string ->
   files:[ `C ] Sc_sys.File.t list ->
   OPTIONS.t ->
-  'a Lwt_stream.t
+  unit Lwt.t
 
 (** Given a list of proof objectives and properties, returns the properties
     corresponding to unknown proof objectives.  They are matched with their
