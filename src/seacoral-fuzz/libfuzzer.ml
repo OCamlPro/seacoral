@@ -449,7 +449,7 @@ let validate_n_share_test (type r) purpose (wd: r working_data) file =
 
 let start_sharing_tests_from dir wd =
   let on_close f =
-    let* _ = validate_n_share_test For_full_validation wd f in
+    let* _outcome = validate_n_share_test For_full_validation wd f in
     Lwt.return ()
   in
   Sc_sys.Lwt_watch.ASYNC.monitor_dir dir ~on_close
@@ -494,7 +494,9 @@ let run wd =
     and* () =
       Sc_sys.Lwt_file.files_of_dir crashdir |>
       Lwt_stream.iter_n ~max_concurrency:16      (* Note: arbitrary limit (i) *)
-        (fun f -> let* _ = validate_n_share_test For_RTE_identification wd f in Lwt.return ())
+        (fun f ->
+          let* _outcome = validate_n_share_test For_RTE_identification wd f in
+          Lwt.return ())
     in
     (* TODO: just compute stats from corpus and store info. No need to do that
        in this way.  Here we may just concentrate on timing. *)
