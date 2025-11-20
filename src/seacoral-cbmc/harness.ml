@@ -194,6 +194,7 @@ let support_data (type r) (project : r Sc_project.Types.project) =
   }
 
 (* ---- *)
+
 (** Prints a __CPROVER_input call for the variable specified by the Access_path
     [id] of type [t]. This function can be called for leaf types (i.e. non
     array, non pointer, non structure) *)
@@ -468,7 +469,8 @@ let generate ~project ~target ~cbmc_driver =
 
 let apply_assignment_to_literal_map ~id ~value env map =
   match StrMap.find_opt id env.inputs with
-  | Some ap -> to_literal_binding_map map ap value
+  | Some id ->
+     to_literal_binding_map map id value
   | None ->
       match StrMap.find_opt id env.empty with
       | Some id ->

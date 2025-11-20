@@ -25,6 +25,10 @@ val get_covered : t -> Basics.Ints.t
     returns the empty set. *)
 val get_uncoverable : t -> Basics.Ints.t
 
+(** [goal_stream_to_test_cases ~env ~harness ~stream kont]
+
+    Reads the result of a CBMC cover analysis and calls [kont] on the
+    result. *)
 val goal_stream_to_test_cases :
   env:Types.simple_label_env
   -> harness:Harness.t
@@ -32,6 +36,7 @@ val goal_stream_to_test_cases :
   -> ((Sc_values.literal_binding * Basics.Ints.t) list -> unit Lwt.t)
   -> t Lwt.t
 
+(** Same as [goal_stream_to_test_cases] for a CBMC assert/clabel analysis. *)
 val assert_data_stream_to_test_cases :
   env:Types.simple_label_env ->
   harness:Harness.t ->
@@ -39,7 +44,6 @@ val assert_data_stream_to_test_cases :
   ([ `Cov of (Sc_values.literal_binding * Basics.Ints.t)
    | `Uncov of int] -> unit Lwt.t) ->
   t Lwt.t
-
 
 (** Returns the data content of a list. *)
 val only_data : 'a Types.DATA.cell list -> 'a list

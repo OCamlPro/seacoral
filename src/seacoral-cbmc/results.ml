@@ -32,7 +32,7 @@ let empty = {
   covered = Ints.empty;
   uncoverable = Ints.empty;
   non_valid_extra_properties = [];
-  }
+}
 
 let add_test res (t, cov) =
   let rec loop prev_tests = function
