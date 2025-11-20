@@ -54,7 +54,7 @@ TODO: here we'd like CBMC to find a test that fails the oracle:
   [A]{Sc} Covered labels: {}
   [A]{Sc} Uncoverable labels: {2}
   [A]{Sc} Crash statistics: rte: none
-  [A]{Sc} Oracle statistics: fails: none
+  [A]{Sc} Oracle statistics: fails: 1 test
   [A]{Sc}        1: Unknown
                  2: Unknown
           Coverage: (0/2) 0.0%
