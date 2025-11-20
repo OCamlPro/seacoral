@@ -150,6 +150,7 @@ module TYPES = struct
       entrypoint: string;
       mutable inputs: AP.t StrMap.t;  (* CBMC input argument => Access_path *)
       mutable empty: AP.t StrMap.t;   (* Pointer => non-NULL empty array flag *)
+      mutable tmp_counter: int; (* A counter for temporary variables to enforce uniqueness *)
     }
 end
 
@@ -162,6 +163,7 @@ let empty_env entrypoint =
     entrypoint;
     inputs = StrMap.empty;
     empty = StrMap.empty;
+    tmp_counter = 0;
   }
 
 let entrypoint t =
@@ -192,7 +194,6 @@ let support_data (type r) (project : r Sc_project.Types.project) =
   }
 
 (* ---- *)
-
 (** Prints a __CPROVER_input call for the variable specified by the Access_path
     [id] of type [t]. This function can be called for leaf types (i.e. non
     array, non pointer, non structure) *)
@@ -201,15 +202,20 @@ let make_symbolic_base ~env ppf (t, id) =
   Log.debug "Symbolizing value %S" v;
   (* Checking if we did not already initialize it. *)
   if not @@ StrMap.mem v env.inputs then begin
-    let ty = Fmt.str "%a" pp_ctypes_static t |> String.replace_spaces ~by:'_' in
-    env.inputs <- StrMap.add v id env.inputs;
-    Fmt.pf
-      ppf
-      "%s = %a;@,\
-       __CPROVER_input(%S, %s);"
-      v nondet_call ty
-      v v
-  end
+      let c_ty = Fmt.str "%a" pp_ctypes_static t in
+      let ty = String.replace_spaces ~by:'_' c_ty in
+      let tmp = Format.sprintf "__tmp_%i" env.tmp_counter in
+      env.tmp_counter <- env.tmp_counter + 1;
+      env.inputs <- StrMap.add v id env.inputs;
+      Fmt.pf
+        ppf
+        "%s %s = %a;@,\
+         %s = %s;@,\
+         __CPROVER_input(%S, %s);"
+        c_ty tmp nondet_call ty
+        v  tmp
+        v tmp
+    end
 
 (** Symbolizes each of the [size] cells of the array specified by the
     Access_path [id]. *)

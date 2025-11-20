@@ -32,32 +32,20 @@ let empty = {
   covered = Ints.empty;
   uncoverable = Ints.empty;
   non_valid_extra_properties = [];
-}
+  }
 
-let add_tests
-    (tests : (Sc_values.literal_binding * Ints.t) list)
-    res =
-  let covered =
-    List.fold_left
-      (fun acc (_, ids) -> Ints.union acc ids)
-      Ints.empty
-      tests
+let add_test res (t, cov) =
+  let rec loop prev_tests = function
+    | [] -> (t, cov) :: List.rev prev_tests
+    | ((t', cov') as r) :: tl ->
+       if t = t' then
+         List.rev prev_tests @ (t, Ints.union cov cov') :: tl
+       else
+         loop (r :: prev_tests) tl
   in
-  if Ints.subset covered res.covered then
-    res
-  else if
-    Ints.subset res.covered covered &&
-    List.length tests < List.length res.test_inputs
-  then
-    (* The new set of tests covers more than the previous one *)
-    { res with
-      test_inputs = tests;
-      covered;
-    }
-  else
-    { res with
-      test_inputs = res.test_inputs @ tests;
-      covered = Ints.union covered res.covered }
+  {res with test_inputs = loop [] res.test_inputs; covered = Ints.union res.covered cov}
+
+let add_tests = List.fold_left add_test
 
 let add_non_valid_extra_property ac res = {
   res with
@@ -150,7 +138,7 @@ let goal_stream_to_test_cases ~env ~harness ~stream kont =
              ) t
          in
          let* () = kont new_tests in
-         Lwt.return @@ add_tests new_tests acc
+         Lwt.return @@ add_tests acc new_tests
     )
     empty
 
@@ -241,8 +229,11 @@ let assert_data_stream_to_test_cases ~env ~harness ~stream kont =
           | None -> ( (* Not a pclabel *)
             match ac.acstatus with
             | Success -> Lwt.return acc
-            | Failure_ | Unknown _ ->
+            | Failure_ ->
                Log.debug "Property@ %s@ is@ invalid:@;ignoring" ac.acproperty;
+               Lwt.return @@ add_non_valid_extra_property ac acc
+            | Unknown _ ->
+               (* Log.debug "Property@ %s@ status@ is@ unknown:@;ignoring" ac.acproperty; *)
                Lwt.return @@ add_non_valid_extra_property ac acc
           )
           | Some (property, sl) ->
@@ -254,14 +245,21 @@ let assert_data_stream_to_test_cases ~env ~harness ~stream kont =
                 let* () = kont (`Uncov id) in
                 Lwt.return @@ add_uncoverable sl acc         
              | Failure_ -> (
-               Log.debug "Label %i (%s) is reachable:@ handling counter-example\
+               Log.debug "Label %i (%s) may be reachable:@ handling counter-example\
                           " (Sc_C.Cov_label.id sl) property.pname;
                (* A counter-example has been found for the label's negation: it is reachable *)
                match treat_counter_example harness env ac.actrace with
                | None -> Lwt.return acc
-               | Some r ->
-                  let* () = kont (`Cov r) in
-                  Lwt.return @@ add_tests [r] acc
+               | Some ((test, _) as r) ->
+                  let* () =
+                    if not (List.exists (fun (t, _) -> t = test) acc.test_inputs) then
+                      kont (`Cov r)
+                    else (
+                      Log.debug "Test already generated, not replaying it";
+                      Lwt.return ()
+                    )
+                  in
+                  Lwt.return @@ add_test acc r
              )
              | Unknown s ->
                 Log.debug "Unkwown status (%s) of label %s" s ac.acdescription;
