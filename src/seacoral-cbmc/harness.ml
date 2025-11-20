@@ -251,7 +251,9 @@ let pp_static_malloc ~env ~id ~size_var ~max_size ~typ ppf =
   Fmt.pf ppf "/* Initializing pointer '%s' */@," n;
   Fmt.pf ppf "char __empty = %a;@," nondet_call "char";
   Fmt.pf ppf "__CPROVER_input (\"%s\", __empty);@," empty_array_flag;
-  Fmt.pf ppf "if (__empty) { static %a; %s = x; }@,\
+  Fmt.pf ppf "if (__empty) {@,";
+  Fmt.pf ppf "  __CPROVER_assume(%s == 0);@," size_var;
+  Fmt.pf ppf "  static %a; %s = x; }@,\
              " Sc_values.Printer.c_decl (Array (typ, 0), "x") n;
   Fmt.pf ppf "else if (%s == 0) %s = 0;@," size_var n;
   for i = 0 to max_size do
@@ -460,8 +462,7 @@ let generate ~project ~target ~cbmc_driver =
 
 let apply_assignment_to_literal_map ~id ~value env map =
   match StrMap.find_opt id env.inputs with
-  | Some id ->
-     to_literal_binding_map map id value
+  | Some ap -> to_literal_binding_map map ap value
   | None ->
       match StrMap.find_opt id env.empty with
       | Some id ->

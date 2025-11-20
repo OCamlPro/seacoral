@@ -163,7 +163,7 @@ let variable_assigns_from_trace
     (harness : Harness.t)
     (env: simple_label_env)
     (trace : DATA.instruction list) : (Sc_values.literal_binding * Ints.t) option =
-  let rec check_trace covered = function
+  let rec check_trace ~invalid covered = function
     | [] ->
         (* Log.debug "Trace checked, returning covered labels"; *)
         Some covered
@@ -172,25 +172,27 @@ let variable_assigns_from_trace
           match PropertyMap.find_by_name fs.fsproperty env.proof_objectives with
           | Some (_, lbl) -> (* Assertion reachable *)
               (* Log.debug "Label %i is reachable!" (Sc_C.Cov_label.id lbl); *)
-              check_trace (Ints.add (Sc_C.Cov_label.id lbl) covered) tl
+              check_trace ~invalid (Ints.add (Sc_C.Cov_label.id lbl) covered) tl
           | None -> (* Failure on an assertion! *)
              if
                List.exists
                  (fun DATA.{pname; _} -> fs.fsproperty = pname)
                  env.extra_required_properties;
              then begin
-                 Log.debug "Property@ %s@ is@ invalid,@ cannot@ conclude@ on@ the@ \
-                            validity@ of@ the@ trace@ after@ that" fs.fsproperty;
-                 None
+                 if not invalid then
+                   Log.debug
+                     "Property@ %s@ is@ invalid,@ cannot@ conclude@ on@ the@ \
+                      validity@ of@ the@ trace@ after@ that" fs.fsproperty;
+                  check_trace ~invalid:true covered tl
                end
              else begin
                  raise (UNKNOWN_PROPERTY fs.fsproperty)
                end
                
         end
-    | _ :: tl -> check_trace covered tl
+    | _ :: tl -> check_trace ~invalid covered tl
   in
-  match check_trace Ints.empty trace with
+  match check_trace ~invalid:false Ints.empty trace with
   | Some covered ->
      Some ((Harness.trace_to_literal harness trace), covered)
   | _ ->
