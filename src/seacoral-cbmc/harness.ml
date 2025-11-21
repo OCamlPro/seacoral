@@ -259,9 +259,10 @@ let pp_static_malloc ~env ~id ~size_var ~max_size ~typ ppf =
   Fmt.pf ppf "char __empty = %a;@," nondet_call "char";
   Fmt.pf ppf "__CPROVER_input (\"%s\", __empty);@," empty_array_flag;
   Fmt.pf ppf "if (__empty) {@,";
+  Fmt.pf ppf "  static %a;@," Sc_values.Printer.c_decl (Array (typ, 0), "x");
+  Fmt.pf ppf "  %s = x;@," n;
   Fmt.pf ppf "  __CPROVER_assume(%s == 0);@," size_var;
-  Fmt.pf ppf "  static %a; %s = x; }@,\
-             " Sc_values.Printer.c_decl (Array (typ, 0), "x") n;
+  Fmt.pf ppf "}@,";
   Fmt.pf ppf "else if (%s == 0) %s = 0;@," size_var n;
   for i = 0 to max_size do
     Fmt.pf ppf "else if (%s == %i) %s = malloc(%i);@,\
