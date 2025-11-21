@@ -1,1 +1,13 @@
-../../common-files/tritype-basic/seacoral.toml
+[project]
+files = ["tritype.c"]
+entrypoint = "tritype"
+criterion = "WM"
+
+[klee]
+timeout = 10
+
+[libfuzzer]
+timeout = 0
+runs = 1000
+seed = 42
+

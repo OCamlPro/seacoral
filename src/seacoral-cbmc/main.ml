@@ -88,7 +88,7 @@ let handle_cover_result
   let params = wd.project.params in
   let module Raw_test = (val params.test_repr) in
   let v = Raw_test.Val.blank params.test_struct in
-  Log.info "@[<2>Blank@ built,@ assigning@ input@ %a@]\
+  Log.debug "@[<2>Blank@ built,@ assigning@ input@ %a@]\
             " Sc_values.pp_literal_binding inputs;
   Raw_test.Val.assign_from_literal params.typdecls v inputs;
   let* outcome =
