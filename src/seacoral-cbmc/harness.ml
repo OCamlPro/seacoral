@@ -203,20 +203,20 @@ let make_symbolic_base ~env ppf (t, id) =
   Log.debug "Symbolizing value %S" v;
   (* Checking if we did not already initialize it. *)
   if not @@ StrMap.mem v env.inputs then begin
-      let c_ty = Fmt.str "%a" pp_ctypes_static t in
-      let ty = String.replace_spaces ~by:'_' c_ty in
-      let tmp = Format.sprintf "__tmp_%i" env.tmp_counter in
-      env.tmp_counter <- env.tmp_counter + 1;
-      env.inputs <- StrMap.add v id env.inputs;
-      Fmt.pf
-        ppf
-        "%s %s = %a;@,\
-         %s = %s;@,\
-         __CPROVER_input(%S, %s);"
-        c_ty tmp nondet_call ty
-        v  tmp
-        v tmp
-    end
+    let c_ty = Fmt.str "%a" pp_ctypes_static t in
+    let ty = String.replace_spaces ~by:'_' c_ty in
+    let tmp = Format.sprintf "__tmp_%i" env.tmp_counter in
+    env.tmp_counter <- env.tmp_counter + 1;
+    env.inputs <- StrMap.add v id env.inputs;
+    Fmt.pf
+      ppf
+      "%s %s = %a;@,\
+       %s = %s;@,\
+       __CPROVER_input(%S, %s);"
+      c_ty tmp nondet_call ty
+      v  tmp
+      v tmp
+  end
 
 (** Symbolizes each of the [size] cells of the array specified by the
     Access_path [id]. *)
