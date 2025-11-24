@@ -1,6 +1,5 @@
-This is considered to fail, as launching in cover mode after assert
-mode should achieve as well as cover (that finds 100% coverage).
-
+We start cbmc in cover mode to quickly generate tests without focusing on
+uncoverable labels.
   $ seacoral --tools cbmc --cbmc-mode cover
   [A]{Sc} Starting to log into `_sc/tritype.c-WM-@1/logs/1.log'
   [A]{Sc} Initializing working environment...
@@ -122,6 +121,8 @@ mode should achieve as well as cover (that finds 100% coverage).
                101: Unknown
           Coverage: (92/101) 91.1%
 
+Then, we complete the analysis by running cbmc in assert mode to prove
+the uncoverability of the remaining labels.
   $ seacoral --tools cbmc --cbmc-mode assert
   [A]{Sc} Starting to log into `_sc/tritype.c-WM-@2/logs/2.log'
   [A]{Sc} Initializing working environment...
