@@ -120,10 +120,11 @@ let uncovered_properties
   in
   let env =
     List.fold_left begin fun env prop ->
-      (* Log.debug "Property %a" Printer.pp_property prop; *)
+      Log.debug "Property %a" Printer.pp_property prop;
       match info_from_property ~harness_file ~labelized_file ~entrypoint ~mode prop with
       | `DiscardProperty -> Log.debug "Discarding@ property@ %s" prop.pname; env
       | `ExtraProperty ->
+         Log.debug "Extra property";
          { env with
            extra_required_properties = prop :: env.extra_required_properties }
       | `Label lbl_id ->
@@ -136,9 +137,12 @@ let uncovered_properties
          | Some lbl when
                 Sc_C.Cov_label.is_unknown lbl &&
                   not (Basics.Ints.mem lbl_id already_decided) ->(* unknown status *)
+            Log.debug "Label with unknown status: %i" (Sc_C.Cov_label.id lbl);
             { env with
               proof_objectives = PropertyMap.add prop lbl env.proof_objectives }
          | Some lbl ->                                          (* known status *)
+            Log.debug "Label with status %s (%b)"
+              (Sc_C.Cov_label.(show_status @@ status lbl))  (Basics.Ints.mem lbl_id already_decided);
             { env with
               already_proven = PropertyMap.add prop lbl env.already_proven }
     end empty_env cbmc_props
@@ -205,15 +209,22 @@ let treat_cbmc_output_stream
      | StreamEnd -> on_stream_end (); Lwt.return ()
      | exn -> Lwt.reraise exn)
 
+let str_of_mode = function
+  | Types.OPTIONS.Cover -> "CBMC_COVER_MODE"
+  | Assert -> "CBMC_ASSERT_MODE"
+  | CLabel -> "CBMC_CLABEL_MODE"
+
 let cbmc_generic_process
     ~encoding
-    ~resdir
+    ~runner_options
     ~timeout
     ~(inputs_json : [>`json] Sc_sys.File.t)
     ~(outputs_json : [>`json] Sc_sys.File.t)
     ~(errors_file : _ Sc_sys.File.t)
     ~(store : Sc_store.t)
     ~kont : unit Lwt.t =
+  let resdir = runner_options.runner_resdir
+  and mode = runner_options.runner_mode in
   let* inputs_fd =
     Log.debug "input: `%a'" Sc_sys.File.print inputs_json;
     Sc_sys.Lwt_file.descriptor inputs_json [O_RDONLY] 0       (* perm. unused *)
@@ -232,6 +243,7 @@ let cbmc_generic_process
       Sc_sys.Ezcmd.Std.(make "cbmc" |>
                         key "json-interface" |>
                         rawf "-I%a" Sc_sys.File.print resdir |>
+                        rawf "-D%s" (str_of_mode mode) |>
                         to_cmd)
       ~stdin:(`FD_move (Lwt_unix.unix_file_descr inputs_fd))
       ~stdout:(`Grab (Lines redirect_line))
@@ -407,7 +419,7 @@ let cbmc_start
   let* inputs_json = write_json ek ~runner_options joptions
   and* outputs_json = out_json ek ~runner_options
   and* errors_file = err_file ek ~runner_options in
-  cbmc_generic_process ~encoding ~kont ~resdir:runner_options.runner_resdir
+  cbmc_generic_process ~encoding ~kont ~runner_options
     ~store ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
 
 let cbmc_get_properties  : property list cell cbmc_run =

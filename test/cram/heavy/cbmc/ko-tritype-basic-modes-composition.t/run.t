@@ -1,7 +1,7 @@
 This is considered to fail, as launching in cover mode after assert
 mode should achieve as well as cover (that finds 100% coverage).
 
-  $ seacoral --tools cbmc --cbmc-mode assert
+  $ seacoral --tools cbmc --cbmc-mode cover
   [A]{Sc} Starting to log into `_sc/tritype.c-WM-@1/logs/1.log'
   [A]{Sc} Initializing working environment...
   [A]{Sc} Doing the hard work...
@@ -9,7 +9,7 @@ mode should achieve as well as cover (that finds 100% coverage).
   [A]{Sc} Extracting new testcases from corpus...
   [A]{Sc} Hard work done
   [A]{Sc} Coverage statistics for `tritype':
-          cov: 92 (91.1%) uncov: 9 (8.9%) unkwn: 0 (0.0%) with 12 tests
+          cov: 92 (91.1%) uncov: 0 (0.0%) unkwn: 0 (8.9%) with 14 tests
   [A]{Sc} Covered labels:
           {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20,
            21, 23, 24, 25, 26, 27, 28, 30, 32, 33, 34, 35, 36, 37, 38, 39, 40,
@@ -17,7 +17,7 @@ mode should achieve as well as cover (that finds 100% coverage).
            58, 59, 60, 61, 62, 63, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76,
            77, 78, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 92, 93, 94, 95,
            96, 97, 98, 99, 100}
-  [A]{Sc} Uncoverable labels: {15, 22, 29, 31, 64, 67, 79, 91, 101}
+  [A]{Sc} Uncoverable labels: {}
   [A]{Sc} Crash statistics: rte: none
   [A]{Sc}        1: Covered
                  2: Covered
@@ -122,13 +122,13 @@ mode should achieve as well as cover (that finds 100% coverage).
                101: Unknown
           Coverage: (92/101) 91.1%
 
-  $ seacoral --tools cbmc --cbmc-mode cover
+  $ seacoral --tools cbmc --cbmc-mode assert
   [A]{Sc} Starting to log into `_sc/tritype.c-WM-@2/logs/2.log'
   [A]{Sc} Initializing working environment...
   [A]{Sc} Skipping `tritype' (no objective left undecided)
   [A]{Sc} Hard work done
   [A]{Sc} Coverage statistics for `tritype':
-          cov: 92 (91.1%) uncov: 9 (8.9%) unkwn: 0 (0.0%) with 12 tests
+          cov: 92 (91.1%) uncov: 9 (8.9%) unkwn: 0 (0.0%) with 14 tests
   [A]{Sc} Covered labels:
           {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20,
            21, 23, 24, 25, 26, 27, 28, 30, 32, 33, 34, 35, 36, 37, 38, 39, 40,

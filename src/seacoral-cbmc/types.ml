@@ -315,4 +315,5 @@ type runner_options =
     runner_inputs: Sc_sys.File.dir;
     runner_outputs: Sc_sys.File.dir;
     runner_resdir:Sc_sys.File.dir;
+    runner_mode: OPTIONS.mode
   }

@@ -43,7 +43,13 @@ let add_test res (t, cov) =
        else
          loop (r :: prev_tests) tl
   in
-  {res with test_inputs = loop [] res.test_inputs; covered = Ints.union res.covered cov}
+  if Ints.subset cov res.covered
+  then res
+  else {
+      res with
+      test_inputs = loop [] res.test_inputs
+    ; covered = Ints.union res.covered cov
+    }
 
 let add_tests = List.fold_left add_test
 

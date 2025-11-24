@@ -36,18 +36,13 @@ module Log =
 (* Copies the resource file corresponding to the current cbmc moden then
    generates the harness in the workspace.
    Returns the harness file and its internal representation. *)
-let harness_gen ~resdir ~project ~workspace ~mode =
+let harness_gen ~resdir ~project ~workspace =
   let workdir = workspace.workdir in
   let target = workdir / "harness.c" in
   (* We copy the correct resource file in the work space. This allows
      to only change this file to switch modes. *)
   let cbmc_driver =
-    let orig_file =
-      match mode with
-      | OPTIONS.Cover -> resdir / "cbmc_cover_driver.h"
-      | Assert        -> resdir / "cbmc_assert_driver.h"
-      | CLabel        -> resdir / "cbmc_label_driver.h"
-    in
+    let orig_file = resdir / "cbmc_driver.h" in
     let new_file = workdir / "cbmc_driver.h" in
     Sc_sys.File.link orig_file new_file;
     new_file
@@ -192,9 +187,7 @@ let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
     Sc_core.Workspace.install_resources_in ~workspace
       Common.resource_installer
   in
-  let harness_file, harness_repr =
-    harness_gen ~resdir ~project ~workspace ~mode:opt.mode
-  in
+  let harness_file, harness_repr = harness_gen ~resdir ~project ~workspace in
   let runner_iteration = project.config.project_run.run_num in
   let inputs = workspace.workdir / "inputs"
   and outputs = workspace.workdir / "outputs" in
@@ -206,7 +199,9 @@ let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
                runner_options = { runner_iteration;
                                   runner_inputs = inputs;
                                   runner_outputs = outputs;
-                                  runner_resdir = resdir } }
+                                  runner_resdir = resdir;
+                                  runner_mode = opt.mode
+    } }
 
 let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
   Log.debug "Getting@ properties@ to@ check";
@@ -241,6 +236,8 @@ let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
       let already_decided =
         Basics.Ints.union covinfo.covered_ids covinfo.uncoverable_ids
       in
+      Log.info "There@ were@ already@ %i@ properties@ decided"
+        (Basics.Ints.cardinal already_decided);      
       Lwt.return @@ Option.some @@
       Runner.uncovered_properties
         ~mode:wd.opt.mode
