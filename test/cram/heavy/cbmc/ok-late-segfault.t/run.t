@@ -29,7 +29,7 @@
           cov: 1 (25.0%) uncov: 0 (0.0%) unkwn: 3 (75.0%) with 1 test
   [A]{Sc} Covered labels: {1}
   [A]{Sc} Uncoverable labels: {}
-  [A]{Sc} Crash statistics: rte: none
+  [A]{Sc} Crash statistics: rte: 1 test
   [A]{Sc}        1: Covered
                  2: Unknown
                  3: Unknown
@@ -40,7 +40,7 @@
   [A]{Sc} Initializing working environment...
   [A]{Sc} Current coverage statistics for `f':
           cov: 1 (25.0%) uncov: 0 (0.0%) unkwn: 3 (75.0%) with 1 test
-          rte: none
+          rte: 1 test
   [A]{Sc} Doing the hard work...
   [A]{Sc} Launching cbmc on `f'
   [A]{Sc} Extracting new testcases from corpus...
@@ -49,7 +49,7 @@
           cov: 1 (25.0%) uncov: 0 (0.0%) unkwn: 3 (75.0%) with 1 test
   [A]{Sc} Covered labels: {1}
   [A]{Sc} Uncoverable labels: {}
-  [A]{Sc} Crash statistics: rte: none
+  [A]{Sc} Crash statistics: rte: 1 test
   [A]{Sc}        1: Covered
                  2: Unknown
                  3: Unknown

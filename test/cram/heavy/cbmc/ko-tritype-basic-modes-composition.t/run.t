@@ -9,7 +9,7 @@ mode should achieve as well as cover (that finds 100% coverage).
   [A]{Sc} Extracting new testcases from corpus...
   [A]{Sc} Hard work done
   [A]{Sc} Coverage statistics for `tritype':
-          cov: 92 (91.1%) uncov: 0 (0.0%) unkwn: 0 (8.9%) with 14 tests
+          cov: 92 (91.1%) uncov: 0 (0.0%) unkwn: 9 (8.9%) with 17 tests
   [A]{Sc} Covered labels:
           {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20,
            21, 23, 24, 25, 26, 27, 28, 30, 32, 33, 34, 35, 36, 37, 38, 39, 40,
@@ -125,10 +125,15 @@ mode should achieve as well as cover (that finds 100% coverage).
   $ seacoral --tools cbmc --cbmc-mode assert
   [A]{Sc} Starting to log into `_sc/tritype.c-WM-@2/logs/2.log'
   [A]{Sc} Initializing working environment...
-  [A]{Sc} Skipping `tritype' (no objective left undecided)
+  [A]{Sc} Current coverage statistics for `tritype':
+          cov: 92 (91.1%) uncov: 0 (0.0%) unkwn: 9 (8.9%) with 17 tests
+          rte: none
+  [A]{Sc} Doing the hard work...
+  [A]{Sc} Launching cbmc on `tritype'
+  [A]{Sc} Extracting new testcases from corpus...
   [A]{Sc} Hard work done
   [A]{Sc} Coverage statistics for `tritype':
-          cov: 92 (91.1%) uncov: 9 (8.9%) unkwn: 0 (0.0%) with 14 tests
+          cov: 92 (91.1%) uncov: 9 (8.9%) unkwn: 0 (0.0%) with 17 tests
   [A]{Sc} Covered labels:
           {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20,
            21, 23, 24, 25, 26, 27, 28, 30, 32, 33, 34, 35, 36, 37, 38, 39, 40,

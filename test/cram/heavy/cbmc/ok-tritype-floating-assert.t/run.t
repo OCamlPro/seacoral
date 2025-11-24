@@ -27,4 +27,4 @@ We only check acheved coverage for these tests.
   [A]{Sc} - Tests were generated
   [A]{Sc} Skipped reporting of lreplay results
   $ tr -d '\0' < _sc/last/store/store | wc -c
-  20
+  19

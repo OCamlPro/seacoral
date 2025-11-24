@@ -21,7 +21,7 @@
   [A]{Sc} Extracting new testcases from corpus...
   [A]{Sc} Hard work done
   [A]{Sc} Coverage statistics for `abs_sum':
-          cov: 4 (100.0%) uncov: 0 (0.0%) unkwn: 0 (0.0%) with 3 tests
+          cov: 4 (100.0%) uncov: 0 (0.0%) unkwn: 0 (0.0%) with 1 test
   [A]{Sc} Covered labels: {1, 2, 3, 4}
   [A]{Sc} Uncoverable labels: {}
   [A]{Sc} Crash statistics: rte: none

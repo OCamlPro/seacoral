@@ -15,7 +15,7 @@
           Coverage: (2/2) 100.0%
 
 Check that `__unused_global` is not symbolized:
-  $ tail --lines +8 _sc/last/cbmc/harness.c
+  $ tail --lines +7 _sc/last/cbmc/harness.c
   int main () {
     int b;
     
