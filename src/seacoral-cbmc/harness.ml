@@ -461,7 +461,6 @@ let generate ~project ~target ~cbmc_driver =
   let>% ppf = target in
   Log.debug "Writing@ harness@ file@ `%a'" Sc_sys.File.print target;
   pp_include ppf (Sc_sys.File.absname cbmc_driver);
-  pp_include ppf "cbmc_init.h";
   pp_label_decl ppf;
   pp_include ppf (Sc_sys.File.absname labelized_file);
   pp_body ppf
