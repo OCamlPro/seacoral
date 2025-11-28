@@ -53,8 +53,9 @@ val validate_n_share_raw_test
   -> corpus: 'raw_test Main.corpus
   -> toolname: string
   -> ?purpose: validation_purpose
+  -> ?log_outcome: bool
   -> 'raw_test
-  -> Types.test_outcome option Lwt.t
+  -> unit Lwt.t
 
 (** Warning for {!validate_raw_test_string} does NOT apply. *)
 val validate_n_share_raw_test_file
@@ -62,5 +63,6 @@ val validate_n_share_raw_test_file
   -> corpus: 'raw_test Main.corpus
   -> toolname: string
   -> ?purpose: validation_purpose
+  -> ?log_outcome: bool
   -> _ Sc_sys.File.t
-  -> Types.test_outcome option Lwt.t
+  -> unit Lwt.t

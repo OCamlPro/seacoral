@@ -86,18 +86,10 @@ let handle_cover_result
   Log.debug "@[<2>Blank@ built,@ assigning@ input@ %a@]\
             " Sc_values.pp_literal_binding inputs;
   Raw_test.Val.assign_from_literal params.typdecls v inputs;
-  let* outcome =
-    Sc_corpus.Validator.validate_n_share_raw_test wd.validator v
-      ~corpus:wd.project.corpus ~toolname
-  in
-  Log.info
-    "Test@ status:@ %a"
-    (Fmt.option
-       ~none:(fun ppf () -> Fmt.pf ppf "--none--")
-       Sc_corpus.Printer.pp_test_outcome) outcome;
-  Lwt.return ()
+  Sc_corpus.Validator.validate_n_share_raw_test wd.validator v
+    ~corpus:wd.project.corpus ~toolname ~log_outcome:true
 
-let handle_uncoverable ~wd i = 
+let handle_uncoverable ~wd i =
   Sc_store.share_status ~toolname wd.project.store `Uncov i
 
 let start_cbmc ~wd ~to_cover =
@@ -199,7 +191,7 @@ let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
         Basics.Ints.union covinfo.covered_ids covinfo.uncoverable_ids
       in
       Log.info "There@ were@ already@ %i@ properties@ decided"
-        (Basics.Ints.cardinal already_decided);      
+        (Basics.Ints.cardinal already_decided);
       Lwt.return @@ Option.some @@
       Runner.uncovered_properties
         ~mode:wd.opt.mode

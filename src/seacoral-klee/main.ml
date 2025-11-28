@@ -393,7 +393,7 @@ let start_replayers wd =
             let* () = Lwt_mvar.put ktests_mbox (Some (ktest, resbox)) in
             let* () =
               Lwt_mutex.unlock ktests_cache_lock;
-              let* _outcome = Lwt_mvar.take resbox in
+              let* () = Lwt_mvar.take resbox in
               Lwt_mutex.lock ktests_cache_lock
             in
             Hashtbl.replace ktests_cache ktest `Done;

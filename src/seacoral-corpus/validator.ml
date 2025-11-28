@@ -481,28 +481,36 @@ let validate_raw_test (type raw_test) (ready_validator: raw_test ready)
   validate_raw_test_string ready_validator ?purpose @@
   Raw_test.Val.to_string raw_test
 
+let show_outcome ?(log_outcome = false) outcome =
+  if log_outcome then
+    Log.LWT.debug "Test@ outcome:@ %a"
+      Fmt.(option ~none:(any "ignored") Printer.pp_test_outcome)
+      outcome >>= fun () ->
+    Lwt.return outcome
+  else
+    Lwt.return outcome
+
 (** Warning for {!validate_raw_test_string} applies. *)
 let validate_n_share_raw_test (type raw_test) (ready_validator: raw_test ready)
-    ~(corpus: raw_test Main.corpus) ~toolname ?purpose (raw_test: raw_test) =
-  validate_raw_test ready_validator ?purpose raw_test >>= function
+    ~(corpus: raw_test Main.corpus) ~toolname ?purpose ?log_outcome
+    (raw_test: raw_test) =
+  validate_raw_test ready_validator ?purpose raw_test >>=
+  show_outcome ?log_outcome >>= function
   | None ->                                 (* Valid test, but no new coverage *)
-      Lwt.return None
+      Lwt.return ()
   | Some outcome ->
-     let* () = Main.share_test' ~toolname ~outcome corpus raw_test in
-     Lwt.return (Some outcome)
+      Main.share_test' ~toolname ~outcome corpus raw_test
 
 (** Warning for {!validate_raw_test_string} does NOT apply. *)
 let validate_n_share_raw_test_file (type raw_test) (ready_validator: raw_test ready)
-    ~(corpus: raw_test Main.corpus) ~toolname ?purpose file =
+    ~(corpus: raw_test Main.corpus) ~toolname ?purpose ?log_outcome file =
   let module Raw_test = (val ready_validator.validator.params.test_repr) in
-  validate_raw_test_file ready_validator ?purpose file >>= function
+  validate_raw_test_file ready_validator ?purpose file >>=
+  show_outcome ?log_outcome >>= function
   | None ->                                 (* Valid test, but no new coverage *)
-      Lwt.return None
+      Lwt.return ()
   | Some outcome ->
       let* test_str = Sc_sys.Lwt_file.read file in
-      let* () =
-        Main.share_test' ~toolname ~outcome corpus @@
-          Raw_test.Val.of_string ready_validator.validator.params.test_struct
-            test_str
-      in
-      Lwt.return (Some outcome)
+      Main.share_test' ~toolname ~outcome corpus @@
+      Raw_test.Val.of_string ready_validator.validator.params.test_struct
+        test_str
