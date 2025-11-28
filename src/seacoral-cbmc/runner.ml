@@ -159,7 +159,7 @@ let uncovered_properties
 let treat_cbmc_output_stream
       ~stream
       ~on_stream_end
-      ~handle_line
+      ~log_line
       ~handle_json_object =
   let exception StreamEnd in
   let json = Buffer.create 42 in
@@ -168,7 +168,7 @@ let treat_cbmc_output_stream
   Lwt.catch (fun () ->
       Lwt_stream.iter_s
         (fun l ->
-          let* () = handle_line l in
+          log_line l;
           let l_no_space = String.trim l in
           let () =
             if l_no_space = "" then ()
@@ -236,7 +236,16 @@ let cbmc_generic_process
   in
   (* The stream in which we will write the process' stdout. *)
   let working_json_stream, push_on_working_stream = Lwt_stream.create () in
+  let on_stream_end () = push_on_working_stream None in
   let redirect_line l = push_on_working_stream (Some l); Lwt.return () in
+  let log_line l =
+    let b = Bytes.of_string (l ^ "\n") in
+    let len = Bytes.length b in
+    Lwt.async begin fun () ->
+      let* _l : int = Lwt_unix.write outputs_fd b 0 len in
+      Lwt.return ()
+    end
+  in
   let* proc =
     Sc_sys.Process.exec
       Sc_sys.Ezcmd.Std.(make "cbmc" |>
@@ -255,25 +264,15 @@ let cbmc_generic_process
     Sc_store.on_termination store ~h:(fun _ -> Sc_sys.Process.terminate proc)
   in
   let () =
-    Lwt.async (fun () ->
-        treat_cbmc_output_stream
-          ~on_stream_end:(fun () -> push_on_working_stream None)
-          ~stream:working_json_stream
-          ~handle_line:(fun l ->
-            let b = Bytes.of_string (l ^ "\n") in
-            let len = Bytes.length b in
-            let () =
-              Lwt.async (fun () ->
-                  let* _len_w = Lwt_unix.write outputs_fd b 0 len in
-                  Lwt.return ()
-                )
-            in
-            Lwt.return ()
-          )
-          ~handle_json_object:(fun json ->
-            Json.read_cbmc_output encoding json |> kont
-          )
-      )
+    Lwt.async begin fun () ->
+      treat_cbmc_output_stream
+        ~on_stream_end
+        ~stream:working_json_stream
+        ~log_line
+        ~handle_json_object:(fun json ->
+          Json.read_cbmc_output encoding json |> kont
+        )
+      end
   in
   (* We return once the stream is closed. *)
   Lwt_stream.closed working_json_stream
