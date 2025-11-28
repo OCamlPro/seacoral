@@ -228,7 +228,7 @@ let cbmc_generic_process
     Log.debug "input: `%a'" Sc_sys.File.print inputs_json;
     Sc_sys.Lwt_file.descriptor inputs_json [O_RDONLY] 0       (* perm. unused *)
   and* outputs_fd =
-    Log.debug "output: `%a'" Sc_sys.File.print inputs_json;
+    Log.debug "output: `%a'" Sc_sys.File.print outputs_json;
     Sc_sys.Lwt_file.descriptor outputs_json [O_WRONLY; O_CREAT; O_TRUNC] 0o600
   and* errors_fd =
     Log.debug "errors: `%a'" Sc_sys.File.print errors_file;
