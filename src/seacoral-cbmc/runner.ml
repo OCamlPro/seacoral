@@ -18,13 +18,12 @@ open Lwt.Syntax
 type 'a process_result = 'a
 
 type 'a cbmc_run =
-  kont:('a -> unit Lwt.t) ->
   store:Sc_store.t ->
   runner_options:runner_options ->
   entrypoint:string ->
   files:[ `C ] Sc_sys.File.t list ->
   OPTIONS.t ->
-  unit Lwt.t
+  'a Lwt_stream.t Lwt.t
 
 (* --- *)
 
@@ -411,37 +410,49 @@ let cbmc_start
     ~(store : Sc_store.t)
     ~(entrypoint : string)
     ~(files : [`C] Sc_sys.File.t list)
-    ~(kont : a -> unit Lwt.t)
     (options : OPTIONS.t) =
+  let stream, push_stream = Lwt_stream.create () in
   let joptions, encoding =
     opt_encoding_and_cmd_options_from_exec_kind ek entrypoint files options
   in
   let* inputs_json = write_json ek ~runner_options joptions
   and* outputs_json = out_json ek ~runner_options
   and* errors_file = err_file ek ~runner_options in
-  cbmc_generic_process ~encoding ~kont ~runner_options
-    ~store ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
+  let () =
+    Lwt.async (fun () ->
+        let* () =
+          cbmc_generic_process
+            ~kont:(fun v -> push_stream (Some v); Lwt.return ())
+            ~encoding
+            ~runner_options
+            ~store ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
+        in
+        push_stream None;
+        Lwt.return ()
+      )
+  in
+  Lwt.return stream
 
 let cbmc_get_properties  : property list cell cbmc_run =
-  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start GetProperties ~kont ~store ~runner_options ~entrypoint ~files opt
+  fun ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start GetProperties ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_get_cover_objectives : property list cell cbmc_run =
-  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start GetCoverObjectives ~kont ~store ~runner_options ~entrypoint ~files opt
+  fun ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start GetCoverObjectives ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_get_clabels ~lbls : property list cell cbmc_run =
-  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start (GetCLabels lbls) ~kont ~store ~runner_options ~entrypoint ~files opt
+  fun ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start (GetCLabels lbls) ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_cover_analysis ~to_cover : DATA.cbmc_cover_output DATA.cell cbmc_run =
-  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start (CoverAnalysis to_cover) ~kont ~store ~runner_options ~entrypoint ~files opt
+  fun ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start (CoverAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_assert_analysis ~to_cover : cbmc_assert_output DATA.cell cbmc_run =
-  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start (AssertAnalysis to_cover) ~kont ~store ~runner_options ~entrypoint ~files opt
+  fun ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start (AssertAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt
 
 let cbmc_clabel_analysis ~to_cover : cbmc_assert_output DATA.cell cbmc_run =
-  fun ~kont ~store ~runner_options ~entrypoint ~files opt ->
-  cbmc_start (CLabelAnalysis to_cover) ~kont ~store ~runner_options ~entrypoint ~files opt
+  fun ~store ~runner_options ~entrypoint ~files opt ->
+  cbmc_start (CLabelAnalysis to_cover) ~store ~runner_options ~entrypoint ~files opt

@@ -109,63 +109,42 @@ let start_cbmc ~wd ~to_cover =
   let harness = wd.harness_repr in
   match wd.opt.OPTIONS.mode with
   | Cover ->
-     let stream, push_stream = Lwt_stream.create () in
-     let () =
-       Lwt.async @@
-         fun () ->
-         let* () =
-           Runner.cbmc_cover_analysis
-             ~kont:(fun v -> push_stream (Some v); Lwt.return ())
-             ~store
-             ~runner_options
-             ~entrypoint
-             ~files
-             ~to_cover
-             wd.opt
-         in
-         push_stream None;
-         Lwt.return ()
+     let* stream =
+       Runner.cbmc_cover_analysis
+         ~store
+         ~runner_options
+         ~entrypoint
+         ~files
+         ~to_cover
+         wd.opt
      in
+     Lwt.return @@
      Results.goal_stream_to_test_cases_stream
        ~env
        ~harness
        ~stream
   | Assert ->
-     let stream, push_stream = Lwt_stream.create () in
-     let () =
-       Lwt.async @@
-         fun () ->
-         let* () =
-           Runner.cbmc_assert_analysis
-             ~kont:(fun v -> push_stream (Some v); Lwt.return ())
-             ~store ~runner_options
-             ~entrypoint ~files ~to_cover wd.opt
-         in
-         push_stream None;
-         Lwt.return ()
+     let* stream =
+       Runner.cbmc_assert_analysis
+         ~store ~runner_options
+         ~entrypoint ~files ~to_cover wd.opt
      in
+     Lwt.return @@
      Results.assert_data_stream_to_test_cases_stream
        ~env
        ~harness
        ~stream
   | CLabel ->
-     let stream, push_stream = Lwt_stream.create () in
-     let () =
-       Lwt.async @@
-         fun () ->
-         let* () =
-           Runner.cbmc_clabel_analysis
-             ~kont:(fun v -> push_stream (Some v); Lwt.return ())
-             ~store ~runner_options
-             ~entrypoint ~files ~to_cover wd.opt
-         in
-         push_stream None;
-         Lwt.return ()
-     in
-     Results.assert_data_stream_to_test_cases_stream
-       ~env
-       ~harness
-       ~stream
+    let* stream =
+      Runner.cbmc_clabel_analysis
+        ~store ~runner_options
+        ~entrypoint ~files ~to_cover wd.opt
+    in
+    Lwt.return @@
+    Results.assert_data_stream_to_test_cases_stream
+      ~env
+      ~harness
+      ~stream
 
 let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
     ~project =
@@ -193,10 +172,8 @@ let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
   Log.debug "Getting@ properties@ to@ check";
   let Sc_ltest.Types.{simpl; _} = wd.project.labels in
   let entrypoint = Harness.entrypoint wd.harness_repr in (* Name of the main function in the harness *)
-  let data_properties, push_stream = Lwt_stream.create () in
-  let* () =
+  let* data_properties =
     get_properties
-      ~kont:(fun v -> push_stream (Some v); Lwt.return ())
       ~mode:wd.opt.mode
       ~store:wd.project.store
       ~runner_options:wd.runner_options
@@ -205,7 +182,6 @@ let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
       ~lbls:simpl
       wd.opt
   in
-  push_stream None;
   (* We could process the payload on the fly instead of putting it in a
      list, but the interesting data only is generated in a single cell at the
      end. *)
@@ -255,7 +231,7 @@ let handle_properties (type raw_test) (wd: raw_test working_data)
     (PropertyMap.cardinal env.proof_objectives)
     (PropertyMap.print ?check_equal:None) env.proof_objectives;
   let tic = Unix.gettimeofday () in
-  let rs = start_cbmc ~wd ~to_cover in
+  let* rs = start_cbmc ~wd ~to_cover in
   let* l = fold_on_res_stream ~wd rs in
   let cr = Results.summing_up l in
   let time = Unix.gettimeofday () -. tic in
