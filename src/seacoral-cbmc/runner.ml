@@ -158,43 +158,38 @@ let treat_cbmc_output_stream stream =
   let fmt = Format.formatter_of_buffer json in
   let parenthesis_depth = ref 0 in
   let junk = ref false in
-  Lwt_stream.filter_map begin fun l ->
+  Lwt_stream.map_list begin fun l ->
     let l_no_space = String.trim l in
-    if l_no_space = "" || !junk then None else
+    if l_no_space = "" || !junk then [] else
       match l_no_space.[0] with
       | '[' when !parenthesis_depth = 0 ->
           parenthesis_depth := 1;
-          None
+          []
       | _ ->
-          let commit = ref false in
-          String.iter
-            (fun c ->
-               match c with
-               | '{' | '[' ->
-                   incr parenthesis_depth;
-                   Format.pp_print_char fmt c;
-               | ']' when !parenthesis_depth = 1 ->
-                   junk := true
-               | '}' | ']' ->
-                   decr parenthesis_depth;
-                   Format.pp_print_char fmt c;
-                   if !parenthesis_depth = 1
-                   then commit := true
-               | ',' when !parenthesis_depth = 1 ->
-                   ()
-               | _ ->
-                   Format.pp_print_char fmt c
-            ) l;
-          Format.pp_print_char fmt '\n';
-          if !commit then
-            begin
-              Format.pp_print_flush fmt ();
-              let j = Buffer.contents json in
-              Buffer.clear json;
-              Some j
-            end
-          else
-            None
+          let elements = ref [] in
+          String.iter begin function
+            | '{' | '[' as c ->
+                incr parenthesis_depth;
+                Format.pp_print_char fmt c;
+            | ']' when !parenthesis_depth = 1 ->
+                junk := true
+            | '}' | ']' as c ->
+                decr parenthesis_depth;
+                Format.pp_print_char fmt c;
+                if !parenthesis_depth = 1 then begin
+                  Format.pp_print_flush fmt ();
+                  let j = Buffer.contents json in
+                  if !junk
+                  then Log.debug "Internal@ warning:@ ignored@ garbage@;%s" j
+                  else elements := j :: !elements;
+                  Buffer.clear json;
+                end
+            | ',' when !parenthesis_depth = 1 ->
+                ()
+            | c ->
+                Format.pp_print_char fmt c
+          end l_no_space;
+          List.rev !elements
   end stream
 
 let str_of_mode = function
