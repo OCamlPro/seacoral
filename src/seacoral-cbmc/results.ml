@@ -16,6 +16,14 @@ module Log =
   (val (Ez_logs.from_src @@
         Logs.Src.create "Sc_cbmc.Results" ~doc:"Logs of CBMC results helper"))
 
+type coverable = [ `Cov of Sc_values.literal_binding * Basics.Ints.t ]
+
+type res = [
+    coverable
+  | `Uncov of int
+  | `NonValidExtra of string
+  ]
+
 type t = {
   test_inputs: (Sc_values.literal_binding * Ints.t) list;
   (** The test inputs and the labels they cover *)
@@ -34,7 +42,7 @@ let empty = {
   non_valid_extra_properties = [];
 }
 
-let add_test res (t, cov) =
+let add_test (t, cov) res =
   let rec loop prev_tests = function
     | [] -> (t, cov) :: List.rev prev_tests
     | ((t', cov') as r) :: tl ->
@@ -54,15 +62,21 @@ let add_test res (t, cov) =
     ; covered = Ints.union res.covered cov
     }
 
-let add_tests = List.fold_left add_test
+let add_tests = List.fold_right add_test
 
-let add_non_valid_extra_property ac res = {
+let add_non_valid_extra_property pname res = {
   res with
-  non_valid_extra_properties = ac.DATA.acproperty :: res.non_valid_extra_properties
+  non_valid_extra_properties = pname :: res.non_valid_extra_properties
 }
 
-let add_uncoverable (lbl : [< Sc_C.Types.any] Sc_C.Cov_label.t) res =
-  {res with uncoverable = Ints.add (Sc_C.Cov_label.id lbl) res.uncoverable}
+let add_non_valid_extra_property_ac ac res =
+  add_non_valid_extra_property ac.DATA.acproperty res
+
+let add_uncoverable i res =
+  {res with uncoverable = Ints.add i res.uncoverable}
+
+let add_uncoverable_label (lbl : [< Sc_C.Types.any] Sc_C.Cov_label.t) res =
+  add_uncoverable (Sc_C.Cov_label.id lbl) res
 
 let get_tests c = c.test_inputs
 
@@ -123,6 +137,15 @@ let fold_on_data_stream ?with_print:_ data_stream f acc =
     data_stream
     acc
 
+let map_data_stream ?with_print:_ data_stream f =
+  Lwt_stream.map_list
+    (fun v -> match v with
+     | (DATA.ProgramInfo _ | Message _ | CProverStatus _) as d ->
+        Log.debug "%a" (Printer.pp_cell ~pp_data:(fun _ -> ignore)) d;
+        []
+     | Data data -> f data )
+    data_stream
+
 let only_data (cells : 'a DATA.cell list) : 'a list =
   fold_on_data
     (fun acc d -> d :: acc)
@@ -147,9 +170,28 @@ let goal_stream_to_test_cases ~env ~harness ~stream kont =
              ) t
          in
          let* () = kont new_tests in
-         Lwt.return @@ add_tests acc new_tests
+         Lwt.return @@ add_tests new_tests acc
     )
     empty
+
+let goal_stream_to_test_cases_stream ~env ~harness ~stream =
+  map_data_stream
+    stream
+    (function
+      | DATA.Goals goal_details ->
+         Log.debug "Goal covered: %i" goal_details.gdgoals_covered;
+         []
+      | Tests t ->
+         Log.debug "#tests: %i" (List.length t);
+         let new_tests =
+           List.map (fun i ->
+               let test = Harness.test_to_literal harness i in
+               let covered = covered_goals_of_test env i in
+               test, covered
+             ) t
+         in
+         List.map (fun (t, c) -> `Cov (t, c)) new_tests
+    )  
 
 (* First, reads the trace until it reaches an invalid assertion that does not
    correspond to a label and accumulates the labels covered by the trace.
@@ -159,11 +201,11 @@ let goal_stream_to_test_cases ~env ~harness ~stream kont =
 let variable_assigns_from_trace
     (harness : Harness.t)
     (env: simple_label_env)
-    (trace : DATA.instruction list) : (Sc_values.literal_binding * Ints.t) option =
+    (trace : DATA.instruction list) : (Sc_values.literal_binding * Ints.t) =
   let rec check_trace ~invalid covered = function
     | [] ->
         (* Log.debug "Trace checked, returning covered labels"; *)
-        Some covered
+        covered
     | (DATA.FailureStep fs) :: tl ->
         begin
           match PropertyMap.find_by_name fs.fsproperty env.proof_objectives with
@@ -191,11 +233,8 @@ let variable_assigns_from_trace
         end
     | _ :: tl -> check_trace ~invalid covered tl
   in
-  match check_trace ~invalid:false Ints.empty trace with
-  | Some covered ->
-     Some ((Harness.trace_to_literal harness trace), covered)
-  | _ ->
-      None
+  let covered = check_trace ~invalid:false Ints.empty trace in
+  Harness.trace_to_literal harness trace, covered
 
 let property_and_lbl_of_ac (env: simple_label_env) (ac : DATA.assertion_check)
   : (DATA.property * Sc_C.Cov_label.simple) option =
@@ -212,9 +251,7 @@ let treat_counter_example
       failwith "TODO: invalid_trace"
   | Some trace ->
       match variable_assigns_from_trace harness env trace with
-      | None -> (* No interesting trace deduced from  *)
-          None
-      | Some (test, covered) ->
+      | (test, covered) ->
           Log.debug "@[<2>Test@ covering@ labels@ %a:@;%a@]"
             Ints.print covered
             Sc_values.pp_literal_binding test;
@@ -242,10 +279,10 @@ let assert_data_stream_to_test_cases ~env ~harness ~stream kont =
             | Success -> Lwt.return acc
             | Failure_ ->
                Log.debug "Property@ %s@ is@ invalid:@;ignoring" ac.acproperty;
-               Lwt.return @@ add_non_valid_extra_property ac acc
+               Lwt.return @@ add_non_valid_extra_property_ac ac acc
             | Unknown _ ->
                (* Log.debug "Property@ %s@ status@ is@ unknown:@;ignoring" ac.acproperty; *)
-               Lwt.return @@ add_non_valid_extra_property ac acc
+               Lwt.return @@ add_non_valid_extra_property_ac ac acc
           )
           | Some (property, sl) ->
              match ac.acstatus with
@@ -254,7 +291,7 @@ let assert_data_stream_to_test_cases ~env ~harness ~stream kont =
                 Log.debug "Label %i is unreachable" id;
                 (* We could check now that non_valid_extra_properties is empty or not. *)
                 let* () = kont (`Uncov id) in
-                Lwt.return @@ add_uncoverable sl acc         
+                Lwt.return @@ add_uncoverable_label sl acc         
              | Failure_ -> (
                Log.debug "Label %i (%s) may be reachable:@ handling counter-example\
                           " (Sc_C.Cov_label.id sl) property.pname;
@@ -270,7 +307,7 @@ let assert_data_stream_to_test_cases ~env ~harness ~stream kont =
                       Lwt.return ()
                     )
                   in
-                  Lwt.return @@ add_test acc r
+                  Lwt.return @@ add_test r acc
              )
              | Unknown s ->
                 Log.debug "Unkwown status (%s) of label %s" s ac.acdescription;
@@ -279,3 +316,58 @@ let assert_data_stream_to_test_cases ~env ~harness ~stream kont =
         l
     )
     empty
+
+let assert_data_stream_to_test_cases_stream ~env ~harness ~stream =
+  map_data_stream
+    stream
+    (fun l ->
+      List.fold_left
+        (fun acc ac ->
+          match property_and_lbl_of_ac env ac with
+          | None -> ( (* Not a pclabel *)
+            match ac.acstatus with
+            | Success -> acc
+            | Unknown _ ->
+               Log.debug
+                 "Property@ %s@ status@ is@ unknown:@;ignoring"
+                 ac.acproperty;
+               acc @ [`NonValidExtra ac.acproperty]
+            | Failure_ ->
+               Log.debug "Property@ %s@ is@ invalid:@;ignoring" ac.acproperty;
+               acc @ [`NonValidExtra ac.acproperty]
+          )
+          | Some (property, sl) ->
+             match ac.acstatus with
+             | Success ->
+                let id = Sc_C.Cov_label.id sl in
+                Log.debug "Label@ %i@ is@ unreachable" id;
+                (* We could check now that non_valid_extra_properties is empty
+                   or not. *)
+                acc @ [`Uncov id]      
+             | Failure_ -> (
+               Log.debug "Label@ %i@ (%s)@ may@ be@ reachable:@ handling@ \
+                          counter-example\
+                          " (Sc_C.Cov_label.id sl) property.pname;
+               (* A counter-example has been found for the label's negation: it
+                  is reachable *)
+               match treat_counter_example harness env ac.actrace with
+               | None -> acc
+               | Some (test, c) -> acc @ [ `Cov (test, c) ]
+             )
+             | Unknown s ->
+                Log.debug "Unkwown@ status@ (%s)@ of@ label@ %s\
+                           " s ac.acdescription;
+                acc
+        )
+        []
+        l
+    )
+
+let summing_up l =
+  List.fold_left
+    (fun (res : t) -> function
+      | `Cov (t, c) -> add_test (t, c) res
+      | `Uncov i -> add_uncoverable i res
+      | `NonValidExtra s -> add_non_valid_extra_property s res)
+    empty
+    l

@@ -8,7 +8,13 @@
 (*                                                                        *)
 (**************************************************************************)
 
-(** Abstract representation of CBMC results. *)
+type coverable = [ `Cov of Sc_values.literal_binding * Basics.Ints.t ]
+
+type res = [
+    coverable
+  | `Uncov of int
+  | `NonValidExtra of string
+  ]
 
 type t
 
@@ -45,5 +51,21 @@ val assert_data_stream_to_test_cases :
    | `Uncov of int] -> unit Lwt.t) ->
   t Lwt.t
 
+val goal_stream_to_test_cases_stream :
+  env:Types.simple_label_env
+  -> harness:Harness.t
+  -> stream:Types.DATA.cbmc_cover_output Types.DATA.cell Lwt_stream.t
+  -> res Lwt_stream.t
+
+(** Same as [goal_stream_to_test_cases_stream] for a CBMC
+    assert/clabel analysis. *)
+val assert_data_stream_to_test_cases_stream :
+  env:Types.simple_label_env ->
+  harness:Harness.t ->
+  stream:Types.DATA.cbmc_assert_output Types.DATA.cell Lwt_stream.t ->
+  res Lwt_stream.t 
+
 (** Returns the data content of a list. *)
 val only_data : 'a Types.DATA.cell list -> 'a list
+
+val summing_up : res list -> t

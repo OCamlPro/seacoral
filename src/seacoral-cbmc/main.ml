@@ -79,7 +79,7 @@ let get_properties ~(mode: Types.OPTIONS.mode) ~lbls =
   | CLabel -> Runner.cbmc_get_clabels ~lbls
 
 let handle_cover_result
-      (type raw_test) ~(wd: raw_test working_data) (inputs, _) =
+      (type raw_test) ~(wd: raw_test working_data) inputs =
   let params = wd.project.params in
   let module Raw_test = (val params.test_repr) in
   let v = Raw_test.Val.blank params.test_struct in
@@ -96,13 +96,6 @@ let handle_cover_result
        ~none:(fun ppf () -> Fmt.pf ppf "--none--")
        Sc_corpus.Printer.pp_test_outcome) outcome;
   Lwt.return ()
-
-(* Runs the validator on list of test inputs *)
-let handle_cover_results
-      (type raw_test) ~(wd: raw_test working_data)
-      test_inputs =
-  test_inputs |> (* TODO: iter_p, but with deterministic option for tests *)
-    Lwt_list.iter_s (handle_cover_result ~wd)
 
 let handle_uncoverable ~wd i = 
   Sc_store.share_status ~toolname wd.project.store `Uncov i
@@ -133,11 +126,10 @@ let start_cbmc ~wd ~to_cover =
          push_stream None;
          Lwt.return ()
      in
-     Results.goal_stream_to_test_cases
+     Results.goal_stream_to_test_cases_stream
        ~env
        ~harness
        ~stream
-       (handle_cover_results ~wd)
   | Assert ->
      let stream, push_stream = Lwt_stream.create () in
      let () =
@@ -152,13 +144,10 @@ let start_cbmc ~wd ~to_cover =
          push_stream None;
          Lwt.return ()
      in
-     Results.assert_data_stream_to_test_cases
+     Results.assert_data_stream_to_test_cases_stream
        ~env
        ~harness
        ~stream
-       (function
-        | `Cov i -> handle_cover_result ~wd i
-        | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i))
   | CLabel ->
      let stream, push_stream = Lwt_stream.create () in
      let () =
@@ -173,13 +162,10 @@ let start_cbmc ~wd ~to_cover =
          push_stream None;
          Lwt.return ()
      in
-     Results.assert_data_stream_to_test_cases
+     Results.assert_data_stream_to_test_cases_stream
        ~env
        ~harness
        ~stream
-       (function
-        | `Cov i -> handle_cover_result ~wd i
-        | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i))
 
 let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
     ~project =
@@ -249,13 +235,29 @@ let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
         ~labels:simpl
         ~entrypoint:entrypoint
 
+let fold_on_res_stream ~wd rs =
+  Lwt_stream.fold_s
+    (fun (r : Results.res) acc ->
+      let* () =
+        match r with
+        | `Cov (t, _) -> handle_cover_result ~wd t
+        | `Uncov i -> handle_uncoverable ~wd (Ints.singleton i)
+        | `NonValidExtra _ -> Lwt.return ()
+      in
+      Lwt.return (acc @ [r])
+    )
+    rs
+    []
+
 let handle_properties (type raw_test) (wd: raw_test working_data)
     (SimpleLabelEnv env as to_cover) =
   Log.debug "@[<2>Ending@ up@ with@ %i@ properties@ to@ check:@;%a@]"
     (PropertyMap.cardinal env.proof_objectives)
     (PropertyMap.print ?check_equal:None) env.proof_objectives;
   let tic = Unix.gettimeofday () in
-  let* cr = start_cbmc ~wd ~to_cover in
+  let rs = start_cbmc ~wd ~to_cover in
+  let* l = fold_on_res_stream ~wd rs in
+  let cr = Results.summing_up l in
   let time = Unix.gettimeofday () -. tic in
   Log.info "CBMC took %.3fs" time;
   let covered = Results.get_covered cr in
