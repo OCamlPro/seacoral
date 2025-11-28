@@ -13,6 +13,7 @@
 open Types
 open DATA
 
+open Lwt.Infix
 open Lwt.Syntax
 
 type 'a process_result = 'a
@@ -65,7 +66,7 @@ let property_kind_matches_mode ~mode ~kind =
 let info_from_property_name prop =
     match String.split_on_char '.' prop.pname with
     | [fname; kind; id] -> fname, kind, int_of_string id
-    | _ -> Fmt.failwith "CBMC property name %S expected to be of the form [entrypoint].[kind].[id]." prop.pname 
+    | _ -> Fmt.failwith "CBMC property name %S expected to be of the form [entrypoint].[kind].[id]." prop.pname
 
 let id_from_assert_property_descr prop =
   match String.split_on_char '.' prop.pdescription with
@@ -148,65 +149,53 @@ let uncovered_properties
   in
   SimpleLabelEnv env
 
-(* [treat_cbmc_output_stream ~stream ~on_stream_end ~handle_line ~handle_json_object]
 
-   Reads the stream contents, expecting it to be an array of json objects (the
-   output format of CBMC). Each element of the stream is logged by [handle_line]
-   and, when a json object of the array is fully parsed, it is treated by
-   [handle_json_object].
-   When the array finishes, [on_stream_end] is called.   
- *)
-let treat_cbmc_output_stream
-      ~stream
-      ~on_stream_end
-      ~log_line
-      ~handle_json_object =
-  let exception StreamEnd in
+(* [treat_cbmc_output_stream stream] reads the stream contents, expecting it to
+   be an array of json objects (the output format of CBMC), and returns the
+   corresponding stream of json objects. *)
+let treat_cbmc_output_stream stream =
   let json = Buffer.create 42 in
   let fmt = Format.formatter_of_buffer json in
   let parenthesis_depth = ref 0 in
-  Lwt.catch (fun () ->
-      Lwt_stream.iter_s
-        (fun l ->
-          log_line l;
-          let l_no_space = String.trim l in
-          let () =
-            if l_no_space = "" then ()
-            else
-              match l_no_space.[0] with
-              | '[' when !parenthesis_depth = 0 -> parenthesis_depth := 1
-              | _ ->
-                 String.iter
-                   (fun c ->
-                     match c with
-                     | '{' | '[' ->
-                        incr parenthesis_depth;
-                        Format.pp_print_char fmt c;
-                     | ']' when !parenthesis_depth = 1 ->
-                        raise StreamEnd
-                     | '}' | ']' ->
-                        decr parenthesis_depth;
-                        Format.pp_print_char fmt c;
-                        if !parenthesis_depth = 1 then
-                          begin
-                            Format.pp_print_flush fmt ();
-                            let j = Buffer.contents json in
-                            Lwt.async (fun () -> handle_json_object j);
-                            Buffer.clear json
-                          end
-                     | ',' when !parenthesis_depth = 1 -> ()
-                     | _ ->
-                        Format.pp_print_char fmt c;
-                   ) l;
-                 Format.pp_print_char fmt '\n'
-          in
-          Lwt.return ()
-        )
-        stream
-    )
-    (function
-     | StreamEnd -> on_stream_end (); Lwt.return ()
-     | exn -> Lwt.reraise exn)
+  let junk = ref false in
+  Lwt_stream.filter_map begin fun l ->
+    let l_no_space = String.trim l in
+    if l_no_space = "" || !junk then None else
+      match l_no_space.[0] with
+      | '[' when !parenthesis_depth = 0 ->
+          parenthesis_depth := 1;
+          None
+      | _ ->
+          let commit = ref false in
+          String.iter
+            (fun c ->
+               match c with
+               | '{' | '[' ->
+                   incr parenthesis_depth;
+                   Format.pp_print_char fmt c;
+               | ']' when !parenthesis_depth = 1 ->
+                   junk := true
+               | '}' | ']' ->
+                   decr parenthesis_depth;
+                   Format.pp_print_char fmt c;
+                   if !parenthesis_depth = 1
+                   then commit := true
+               | ',' when !parenthesis_depth = 1 ->
+                   ()
+               | _ ->
+                   Format.pp_print_char fmt c
+            ) l;
+          Format.pp_print_char fmt '\n';
+          if !commit then
+            begin
+              Format.pp_print_flush fmt ();
+              let j = Buffer.contents json in
+              Buffer.clear json;
+              Some j
+            end
+          else
+            None
+  end stream
 
 let str_of_mode = function
   | Types.OPTIONS.Cover -> "CBMC_COVER_MODE"
@@ -220,8 +209,7 @@ let cbmc_generic_process
     ~(inputs_json : [>`json] Sc_sys.File.t)
     ~(outputs_json : [>`json] Sc_sys.File.t)
     ~(errors_file : _ Sc_sys.File.t)
-    ~(store : Sc_store.t)
-    ~kont : unit Lwt.t =
+    ~(store : Sc_store.t) =
   let resdir = runner_options.runner_resdir
   and mode = runner_options.runner_mode in
   let* inputs_fd =
@@ -235,15 +223,16 @@ let cbmc_generic_process
     Sc_sys.Lwt_file.descriptor errors_file [O_WRONLY; O_CREAT; O_TRUNC] 0o600
   in
   (* The stream in which we will write the process' stdout. *)
-  let working_json_stream, push_on_working_stream = Lwt_stream.create () in
-  let on_stream_end () = push_on_working_stream None in
-  let redirect_line l = push_on_working_stream (Some l); Lwt.return () in
-  let log_line l =
-    let b = Bytes.of_string (l ^ "\n") in
-    let len = Bytes.length b in
-    Lwt.async begin fun () ->
-      let* _l : int = Lwt_unix.write outputs_fd b 0 len in
-      Lwt.return ()
+  let json_stream, push_in_json_stream = Lwt_stream.create () in
+  let emit_json_object  o = push_in_json_stream (Some o)
+  and terminate_stream () = push_in_json_stream  None in
+  let output_lines (lines: string Lwt_stream.t) =
+    let oc = Lwt_io.of_fd outputs_fd ~mode:Output in
+    Lwt_io.write_lines oc (Lwt_stream.clone lines) <&> begin
+      treat_cbmc_output_stream lines |>
+      Lwt_stream.iter begin fun json_str ->
+        emit_json_object @@ Json.read_cbmc_output encoding json_str
+      end >|= terminate_stream        (* terminate the stream of json objects *)
     end
   in
   let* proc =
@@ -254,7 +243,7 @@ let cbmc_generic_process
                         rawf "-D%s" (str_of_mode mode) |>
                         to_cmd)
       ~stdin:(`FD_move (Lwt_unix.unix_file_descr inputs_fd))
-      ~stdout:(`Grab (Lines redirect_line))
+      ~stdout:(`Grab (Stream output_lines))
       ~stderr:(`FD_move (Lwt_unix.unix_file_descr errors_fd))
       ~timeout
       ~on_success:(fun () -> Lwt.return_ok ())
@@ -263,19 +252,7 @@ let cbmc_generic_process
   let* _cancel_kill =
     Sc_store.on_termination store ~h:(fun _ -> Sc_sys.Process.terminate proc)
   in
-  let () =
-    Lwt.async begin fun () ->
-      treat_cbmc_output_stream
-        ~on_stream_end
-        ~stream:working_json_stream
-        ~log_line
-        ~handle_json_object:(fun json ->
-          Json.read_cbmc_output encoding json |> kont
-        )
-      end
-  in
-  (* We return once the stream is closed. *)
-  Lwt_stream.closed working_json_stream
+  Lwt.return json_stream
 
 (* From the lannot label identifier, returns the corresponding error label for CBMC *)
 let label_of pp s = Format.asprintf "sc_label%a" pp s (* Defined in cbmc_label_driver.h *)
@@ -410,27 +387,14 @@ let cbmc_start
     ~(entrypoint : string)
     ~(files : [`C] Sc_sys.File.t list)
     (options : OPTIONS.t) =
-  let stream, push_stream = Lwt_stream.create () in
   let joptions, encoding =
     opt_encoding_and_cmd_options_from_exec_kind ek entrypoint files options
   in
   let* inputs_json = write_json ek ~runner_options joptions
   and* outputs_json = out_json ek ~runner_options
   and* errors_file = err_file ek ~runner_options in
-  let () =
-    Lwt.async (fun () ->
-        let* () =
-          cbmc_generic_process
-            ~kont:(fun v -> push_stream (Some v); Lwt.return ())
-            ~encoding
-            ~runner_options
-            ~store ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
-        in
-        push_stream None;
-        Lwt.return ()
-      )
-  in
-  Lwt.return stream
+  cbmc_generic_process ~encoding ~runner_options
+    ~store ~timeout:options.timeout ~inputs_json ~outputs_json ~errors_file
 
 let cbmc_get_properties  : property list cell cbmc_run =
   fun ~store ~runner_options ~entrypoint ~files opt ->
