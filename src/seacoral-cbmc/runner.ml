@@ -13,7 +13,6 @@
 open Types
 open DATA
 
-open Lwt.Infix
 open Lwt.Syntax
 
 type 'a process_result = 'a
@@ -150,47 +149,56 @@ let uncovered_properties
   SimpleLabelEnv env
 
 
-(* [treat_cbmc_output_stream stream] reads the stream contents, expecting it to
-   be an array of json objects (the output format of CBMC), and returns the
-   corresponding stream of json objects. *)
-let treat_cbmc_output_stream stream =
-  let json = Buffer.create 42 in
-  let fmt = Format.formatter_of_buffer json in
-  let parenthesis_depth = ref 0 in
-  let junk = ref false in
-  Lwt_stream.map_list begin fun l ->
-    let l_no_space = String.trim l in
-    if l_no_space = "" || !junk then [] else
-      match l_no_space.[0] with
-      | '[' when !parenthesis_depth = 0 ->
-          parenthesis_depth := 1;
-          []
-      | _ ->
-          let elements = ref [] in
-          String.iter begin function
-            | '{' | '[' as c ->
-                incr parenthesis_depth;
-                Format.pp_print_char fmt c;
-            | ']' when !parenthesis_depth = 1 ->
-                junk := true
-            | '}' | ']' as c ->
-                decr parenthesis_depth;
-                Format.pp_print_char fmt c;
-                if !parenthesis_depth = 1 then begin
-                  Format.pp_print_flush fmt ();
-                  let j = Buffer.contents json in
-                  if !junk
-                  then Log.debug "Internal@ warning:@ ignored@ garbage@;%s" j
-                  else elements := j :: !elements;
-                  Buffer.clear json;
-                end
-            | ',' when !parenthesis_depth = 1 ->
-                ()
-            | c ->
-                Format.pp_print_char fmt c
-          end l_no_space;
-          List.rev !elements
-  end stream
+(* [treat_cbmc_output_stream encoding stream] reads the stream contents,
+   expecting it to be an array of json objects (the output format of CBMC), and
+   returns the corresponding stream of json objects decoded according to
+   [encoding]. *)
+let decode_cbmc_output_stream encoding stream =
+  let out, emit = Lwt_stream.create () in
+  Lwt.async begin fun () ->
+    let json = Buffer.create 42 in
+    let parenthesis_depth = ref 0
+    and in_quotes = ref false
+    and junk = ref false in
+    Lwt.map ignore @@
+    Lwt_stream.fold begin fun l escaping ->
+      String.fold_left begin fun escaping -> function
+        | ',' when !parenthesis_depth = 1 ->                           (* skip *)
+            false
+        | ']' when !parenthesis_depth = 1 ->
+            junk := true;
+            emit None;                                (* terminate the stream *)
+            false
+        | '{' | '[' as c when not !in_quotes ->
+            incr parenthesis_depth;
+            if !parenthesis_depth > 1 then
+              Buffer.add_char json c;
+            false
+        | '}' | ']' as c when not !in_quotes ->
+            decr parenthesis_depth;
+            Buffer.add_char json c;
+            if !parenthesis_depth = 1 then begin
+              let j = Buffer.contents json in
+              Buffer.clear json;
+              if !junk
+              then Log.debug "Internal@ warning:@ ignored@ garbage@;%s" j
+              else emit @@ Some (Json.read_cbmc_output encoding j)
+            end;
+            false
+        | '\\' as c when !in_quotes ->
+            Buffer.add_char json c;
+            not escaping
+        | '"' as c when not escaping ->
+            Buffer.add_char json c;
+            in_quotes := not !in_quotes;
+            false
+        | c ->
+            Buffer.add_char json c;
+            false
+      end escaping l
+    end stream false
+  end;
+  out
 
 let str_of_mode = function
   | Types.OPTIONS.Cover -> "CBMC_COVER_MODE"
@@ -217,19 +225,7 @@ let cbmc_generic_process
     Log.debug "errors: `%a'" Sc_sys.File.print errors_file;
     Sc_sys.Lwt_file.descriptor errors_file [O_WRONLY; O_CREAT; O_TRUNC] 0o600
   in
-  (* The stream in which we will write the process' stdout. *)
-  let json_stream, push_in_json_stream = Lwt_stream.create () in
-  let emit_json_object  o = push_in_json_stream (Some o)
-  and terminate_stream () = push_in_json_stream  None in
-  let output_lines (lines: string Lwt_stream.t) =
-    let oc = Lwt_io.of_fd outputs_fd ~mode:Output in
-    Lwt_io.write_lines oc (Lwt_stream.clone lines) <&> begin
-      treat_cbmc_output_stream lines |>
-      Lwt_stream.iter begin fun json_str ->
-        emit_json_object @@ Json.read_cbmc_output encoding json_str
-      end >|= terminate_stream        (* terminate the stream of json objects *)
-    end
-  in
+  let lines_stream_mbox = Lwt_mvar.create_empty () in
   let* proc =
     Sc_sys.Process.exec
       Sc_sys.Ezcmd.Std.(make "cbmc" |>
@@ -238,7 +234,7 @@ let cbmc_generic_process
                         rawf "-D%s" (str_of_mode mode) |>
                         to_cmd)
       ~stdin:(`FD_move (Lwt_unix.unix_file_descr inputs_fd))
-      ~stdout:(`Grab (Stream output_lines))
+      ~stdout:(`Grab (MBox lines_stream_mbox))
       ~stderr:(`FD_move (Lwt_unix.unix_file_descr errors_fd))
       ~timeout
       ~on_success:(fun () -> Lwt.return_ok ())
@@ -247,7 +243,13 @@ let cbmc_generic_process
   let* _cancel_kill =
     Sc_store.on_termination store ~h:(fun _ -> Sc_sys.Process.terminate proc)
   in
-  Lwt.return json_stream
+  let* output_lines = Lwt_mvar.take lines_stream_mbox in
+  Lwt.async begin fun () ->
+    let oc = Lwt_io.of_fd outputs_fd ~mode:Output in
+    let* () = Lwt_io.write_lines oc (Lwt_stream.clone output_lines) in
+    Lwt_io.close oc
+  end;
+  Lwt.return (decode_cbmc_output_stream encoding output_lines)
 
 (* From the lannot label identifier, returns the corresponding error label for CBMC *)
 let label_of pp s = Format.asprintf "sc_label%a" pp s (* Defined in cbmc_label_driver.h *)
