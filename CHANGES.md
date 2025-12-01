@@ -2,6 +2,9 @@
 
 ## Next release
 
+### Added
+- On the fly reporting and interpretation of CBMC results [#22](https://github.com/ocamlpro/seacoral/pull/22)
+
 
 ## 1.0.0 ( 2025-10-30 )
 
