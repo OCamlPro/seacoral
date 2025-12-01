@@ -23,7 +23,7 @@ type 'a cbmc_run =
   entrypoint:string ->
   files:[ `C ] Sc_sys.File.t list ->
   OPTIONS.t ->
-  'a Lwt_stream.t Lwt.t
+  ('a Lwt_stream.t * (unit -> unit Lwt.t)) Lwt.t
 
 (* --- *)
 
@@ -240,7 +240,7 @@ let cbmc_generic_process
       ~on_success:(fun () -> Lwt.return_ok ())
       ~on_error:(fun e -> Lwt.return_error e)
   in
-  let* _cancel_kill =
+  let* cancel_kill =
     Sc_store.on_termination store ~h:(fun _ -> Sc_sys.Process.terminate proc)
   in
   let* output_lines = Lwt_mvar.take lines_stream_mbox in
@@ -249,7 +249,7 @@ let cbmc_generic_process
     let* () = Lwt_io.write_lines oc (Lwt_stream.clone output_lines) in
     Lwt_io.close oc
   end;
-  Lwt.return (decode_cbmc_output_stream encoding output_lines)
+  Lwt.return (decode_cbmc_output_stream encoding output_lines, cancel_kill)
 
 (* From the lannot label identifier, returns the corresponding error label for CBMC *)
 let label_of pp s = Format.asprintf "sc_label%a" pp s (* Defined in cbmc_label_driver.h *)

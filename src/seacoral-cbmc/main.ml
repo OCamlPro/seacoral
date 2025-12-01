@@ -101,7 +101,7 @@ let start_cbmc ~wd ~to_cover =
   let harness = wd.harness_repr in
   match wd.opt.OPTIONS.mode with
   | Cover ->
-     let* stream =
+     let* stream, cancel_kill =
        Runner.cbmc_cover_analysis
          ~store
          ~runner_options
@@ -110,33 +110,27 @@ let start_cbmc ~wd ~to_cover =
          ~to_cover
          wd.opt
      in
-     Lwt.return @@
-     Results.goal_stream_to_test_cases_stream
-       ~env
-       ~harness
-       ~stream
+     Lwt.return
+       (Results.goal_stream_to_test_cases_stream ~env ~harness ~stream,
+        cancel_kill)
   | Assert ->
-     let* stream =
+     let* stream, cancel_kill =
        Runner.cbmc_assert_analysis
          ~store ~runner_options
          ~entrypoint ~files ~to_cover wd.opt
      in
-     Lwt.return @@
-     Results.assert_data_stream_to_test_cases_stream
-       ~env
-       ~harness
-       ~stream
+     Lwt.return
+       (Results.assert_data_stream_to_test_cases_stream ~env ~harness ~stream,
+        cancel_kill)
   | CLabel ->
-    let* stream =
+    let* stream, cancel_kill =
       Runner.cbmc_clabel_analysis
         ~store ~runner_options
         ~entrypoint ~files ~to_cover wd.opt
     in
-    Lwt.return @@
-    Results.assert_data_stream_to_test_cases_stream
-      ~env
-      ~harness
-      ~stream
+    Lwt.return
+      (Results.assert_data_stream_to_test_cases_stream ~env ~harness ~stream,
+       cancel_kill)
 
 let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
     ~project =
@@ -157,14 +151,13 @@ let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
                                   runner_inputs = inputs;
                                   runner_outputs = outputs;
                                   runner_resdir = resdir;
-                                  runner_mode = opt.mode
-    } }
+                                  runner_mode = opt.mode } }
 
 let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
   Log.debug "Getting@ properties@ to@ check";
   let Sc_ltest.Types.{simpl; _} = wd.project.labels in
   let entrypoint = Harness.entrypoint wd.harness_repr in (* Name of the main function in the harness *)
-  let* data_properties =
+  let* data_properties, cancel_kill =
     get_properties
       ~mode:wd.opt.mode
       ~store:wd.project.store
@@ -177,7 +170,8 @@ let properties_to_verify wd : [`simple] analysis_env option Lwt.t =
   (* We could process the payload on the fly instead of putting it in a
      list, but the interesting data only is generated in a single cell at the
      end. *)
-  let* data_properties = Lwt_stream.to_list data_properties in
+  let* data_properties = Lwt_stream.to_list data_properties
+  and* () = cancel_kill () in
   match List.flatten @@ Results.only_data data_properties with
   | [] when not (Sc_project.Manager.seeks_oracle_failures wd.project) ->
       Log.warn "Found@ no@ properties@ to@ verify@ on@ the@ C@ file";
@@ -223,10 +217,11 @@ let handle_properties (type raw_test) (wd: raw_test working_data)
     (PropertyMap.cardinal env.proof_objectives)
     (PropertyMap.print ?check_equal:None) env.proof_objectives;
   let tic = Unix.gettimeofday () in
-  let* rs = start_cbmc ~wd ~to_cover in
+  let* rs, cancel_kill = start_cbmc ~wd ~to_cover in
   let* l = fold_on_res_stream ~wd rs in
   let cr = Results.summing_up l in
   let time = Unix.gettimeofday () -. tic in
+  let* () = cancel_kill () in
   Log.info "CBMC took %.3fs" time;
   let covered = Results.get_covered cr in
   let uncoverable = Results.get_uncoverable cr in
