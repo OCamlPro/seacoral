@@ -7,6 +7,7 @@
 - On the fly reporting and interpretation of CBMC results [#22](https://github.com/ocamlpro/seacoral/pull/22)
 
 ### Fixed
+- Rights management when creating the `diver` user in the Docker image [#46](https://github.com/OCamlPro/seacoral/pull/46) (fix for [Issue #45](https://github.com/OCamlPro/seacoral/issues/45))
 - Default maximum number of inputs in CBMC automatically increased [#36](https://github.com/OCamlPro/seacoral/pull/36)
 
 ## 1.0.0 ( 2025-10-30 )

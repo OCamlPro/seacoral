@@ -64,11 +64,15 @@ RUN echo >/etc/apt/sources.list.d/trixie.list                                  \
 FROM base AS executable
 
 # Create a dedicated user
-RUN adduser --comment "Reef explorer" diver \
- && adduser --group divers \
- && adduser diver divers \
- && usermod --append --groups sudo diver \
- && echo >>/etc/sudoers "diver ALL = NOPASSWD:ALL"
+COPY <<-EOF /etc/sudoers.d/diver
+  diver ALL=(ALL:ALL) NOPASSWD:ALL
+EOF
+RUN chmod 440 /etc/sudoers.d/diver                                             \
+ && chown root:root /etc/sudoers.d/diver                                       \
+ && if getent passwd 1000; then userdel -r $(id -nu 1000); fi                  \
+ && adduser --uid 1000 --disabled-password --comment "Reef explorer" diver     \
+ && passwd -l diver                                                            \
+ && chown -R diver:diver /home/diver
 USER diver
 WORKDIR /home/diver
 
