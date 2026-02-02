@@ -57,6 +57,9 @@ let make ~workspace decoder store params =
     store;
   }
 
+let params r =
+  r.validator.params
+
 (* --- *)
 
 (** Validator exit code that is used to detect cases where a test terminates

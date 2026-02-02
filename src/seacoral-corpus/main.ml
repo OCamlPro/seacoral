@@ -43,13 +43,12 @@ type 'r corpus =
     bypassed_count: int ref;
     bypassed_count_mutex: Lwt_mutex.t;
     bypassed_file: [`bin] file;
-    params: params;
-    test_repr: 'r repr;
+    params: 'r corpus_params;
   }
 and 'r registered_test =
   {
     file: 'r Sc_sys.File.t;
-    raw: 'r Lazy.t;
+    raw: 'r Lwt.t Lazy.t;
   }
 and 'r given_test =
   {
@@ -96,29 +95,33 @@ let pp_outcome ppf = function
 
 (* --- *)
 
-let read_test' (type r) ({ test_repr = (module Raw_test);
-                           _ } as corpus: r corpus) f =
-  let< ic = f in
-  Raw_test.Val.read corpus.params.test_struct ic       (* TODO: lwt-style I/O *)
+let read_raw_test (type r) (corpus: r corpus) file =
+  let module Raw_test = (val corpus.params.test_repr) in
+  Raw_test.Val.of_string corpus.params.test_struct =|<
+  Sc_sys.Lwt_file.read file
 
 let read_test corpus f =
-  Lwt.return @@ try Some (read_test' corpus f) with
-  | Sc_values.Struct.Invalid_value_representation _ as e ->
-      Log.warn "invalid input in `%a'; discarding" Sc_sys.File.print f;
-      Log.debug "error: %s" (Printexc.to_string e);
-      Sc_sys.File.unlink f;
-      None
-  | Sys_error m ->
-      (* Filter out some errors; may happen when a tool shares a corpus
-         directory where files may appear only temporarily and are removed
-         afterwards. *)
-      Log.warn "%s" m;
-      None
+  Lwt.catch begin fun () ->
+    Lwt.return_some =<< read_raw_test corpus f
+  end begin function
+    | Sc_values.Struct.Invalid_value_representation _ as e ->
+        Log.warn "invalid input in `%a'; discarding" Sc_sys.File.print f;
+        Log.debug "error: %s" (Printexc.to_string e);
+        Sc_sys.File.unlink f;
+        Lwt.return_none
+    | Sys_error m ->
+        (* Filter out some errors; may happen when a tool shares a corpus
+           directory where files may appear only temporarily and are removed
+           afterwards. *)
+        Log.warn "%s" m;
+        Lwt.return_none
+    | e ->
+        Lwt.reraise e
+  end
 
-let write_test (type r) ({ test_repr = (module Raw_test); _ }: r corpus) f v =
-  let> oc = f in
-  Raw_test.Val.write oc v;                           (* TODO: lwt-style I/O *)
-  Lwt.return ()
+let write_test (type r) (corpus: r corpus) f v =
+  let module Raw_test = (val corpus.params.test_repr) in
+  Sc_sys.Lwt_file.write f @@ Raw_test.Val.to_string v
 
 let format_file run_num serialnum toolname id outcome =
   Fmt.str "%04u-@%u-%s-%s-%a"
@@ -204,7 +207,7 @@ let cache_existing_tests ({ tests_cache; tests_cache_mutex; _ } as corpus) =
     Lwt_mutex.with_lock tests_cache_mutex begin fun () ->
       Tests_table.add tests_cache id {
         file = f;
-        raw = lazy (read_test' corpus f);
+        raw = Lazy.from_fun @@ fun () -> read_raw_test corpus f;
       };
       Lwt.return ()
     end
@@ -243,13 +246,14 @@ let receive_new_tests ({ tests_dir; tests_stream;
                   Lwt.return ()
             in
             let* () = write_test corpus file v in
-            Tests_table.add tests_cache id { file; raw = Lazy.from_val v };
+            let raw = Lazy.from_fun @@ fun () -> Lwt.return v in
+            Tests_table.add tests_cache id { file; raw };
             Lwt.return ()
       end
     end
   end tests_stream
 
-let make ~workspace test_repr params =
+let make ~workspace params =
   let tests_dir = workspace.workdir / "raw" in
   let crashes_file = workspace.workdir / "crashdb" in
   let bypassed_file = workspace.workdir / "bypassed" in
@@ -276,7 +280,6 @@ let make ~workspace test_repr params =
       bypassed_count_mutex = Lwt_mutex.create ();
       bypassed_file;
       params;
-      test_repr;
     }
   in
   let* () = load_known_crash_table res in
@@ -285,9 +288,10 @@ let make ~workspace test_repr params =
   Lwt.return res
 
 let share_test (type r) ?on_share ~outcome ~toolname
-    ({ tests_mbox; test_repr = (module Raw_test); _ }: r corpus) v =
+    ({ tests_mbox; params; _ }: r corpus) v =
   (* TODO: May need to deal with padding/alignment bytes in v before computing
      the digest *)
+  let module Raw_test = (val params.test_repr) in
   let v_str = Raw_test.Val.to_string v in
   let id = Digest.string v_str in
   let* () = match on_share with Some f -> f id | None -> Lwt.return () in
@@ -303,8 +307,6 @@ let on_new_test ({ tests_dir; tests_cache;
   Sc_sys.Lwt_watch.monitor_dir tests_dir
     ~on_close:begin fun f ->
       let* { id; _ } as metadata = test_metadata corpus f in
-      (* TODO: take care about exceptions in read_test', at the time of
-         `Lazy.force`. *)
       let* { file; raw } =
         Lwt_mutex.with_lock tests_cache_mutex begin fun () ->
           Lwt.return @@ try
@@ -312,7 +314,7 @@ let on_new_test ({ tests_dir; tests_cache;
           with Not_found ->
             let v = {
               file = f;
-              raw = Lazy.from_val (read_test' corpus f)
+              raw = Lazy.from_fun @@ fun () -> read_raw_test corpus f;
             } in
             Log.debug "Caching input %s" (Digest.to_hex id);
             Tests_table.add tests_cache id v;
@@ -360,6 +362,9 @@ let has_crashes { num_crash_gen; num_crash_imported; _ } =
 
 let has_oracle_failures { num_fails_gen; num_fails_imported; _ } =
   num_fails_gen > 0 || num_fails_imported > 0
+
+let test_repr corpus =
+  corpus.params.test_repr
 
 let test_struct corpus =
   corpus.params.test_struct

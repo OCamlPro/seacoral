@@ -268,8 +268,9 @@ let elaborate ~test_repr ({ workspace; codebase; config; label_data;
   let labels = Sc_ltest.Label_database.get_lbls label_data.label_file in
   let* corpus =
     let* workspace = Sc_core.Workspace.LWT.mksub workspace "corpus" in
-    Sc_corpus.make ~workspace test_repr
-      { test_struct = params.test_struct;
+    Sc_corpus.make ~workspace
+      { test_repr;
+        test_struct = params.test_struct;
         run_num = config.project_run.run_num }
   and* store =
     let* workspace = Sc_core.Workspace.LWT.mksub workspace "store" in

@@ -63,6 +63,35 @@ let pp_test_outcome ppf = function
 
 (* --- *)
 
+type 'raw_test delayed_test_view_emitter = 'raw_test test_view * Basics.PPrt.pu
+
+let pp_raw_test (type raw_test) ~(corpus: raw_test Main.corpus) ppf raw_test =
+  let module Raw_test = (val Main.test_repr corpus) in
+  Raw_test.Val.print ppf raw_test
+
+let delayed_raw_test_printer ~corpus raw_test : Basics.PPrt.pu =
+  fun ppf -> pp_raw_test ~corpus ppf raw_test
+
+let delayed_test_view_printer ?(sep: Basics.PPrt.ufmt = ":@;")
+    (type raw_test) ~(corpus: raw_test Main.corpus) (test_view: _ test_view) =
+  Lwt.bind (Lazy.force test_view.raw) @@ fun r ->
+  let printer ppf =
+    Fmt.pf ppf "Test@ %u@ (%s)%(%)%t" test_view.metadata.serialnum
+      (Digest.to_hex test_view.metadata.id) sep
+      (delayed_raw_test_printer ~corpus r)
+  in
+  Lwt.return (test_view, printer)
+
+let pp_tests: _ Fmt.t =
+  let compare_tests (t1, _) (t2, _) =
+    Int.compare t1.metadata.serialnum t2.metadata.serialnum
+  and test ppf (_, pp) = pp ppf in
+  fun ppf ->
+    Fmt.(using (List.sort compare_tests) @@
+         list ~sep:cut @@ hovbox ~indent:2 test) ppf
+
+(* --- *)
+
 let pp_internal_error ppf = function
   | Unexpected_filename f ->
       Fmt.pf ppf "unexpected filename `%s'" (Sc_sys.File.absname f)

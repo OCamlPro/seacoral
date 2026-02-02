@@ -9,7 +9,8 @@
 (**************************************************************************)
 
 open Types
-open Sc_corpus.Types
+
+(* --- *)
 
 let pp_entrypoint_name ppf project =
   Fmt.string ppf project.extra.given_entrypoint_name
@@ -103,25 +104,6 @@ module C = struct
       ?oracle_func:(if seek_oracle_failures then oracle_func else None)
       ~oracle_assessment ~emit_effective_inputs
 end
-
-(* --- *)
-
-let pp_raw_test (type raw_test) ~(project: raw_test project) ppf raw_test =
-  let module Raw_test = (val project.params.test_repr) in
-  Raw_test.Val.print ppf raw_test
-
-let pp_test_view ?(sep: Basics.PPrt.ufmt = ":@;")
-    (type raw_test) ~(project: raw_test project) ppf (test_view: _ test_view) =
-  Fmt.pf ppf "Test@ %u@ (%s)%(%)%a" test_view.metadata.serialnum
-    (Digest.to_hex test_view.metadata.id) sep
-    (pp_raw_test ~project) (Lazy.force test_view.raw)
-
-let pp_tests (type raw_test) ~(project: raw_test project) : _ Fmt.t =
-  let compare_tests t1 t2 =
-    Int.compare t1.metadata.serialnum t2.metadata.serialnum
-  in
-  Fmt.(using (List.sort compare_tests) @@
-       list ~sep:cut @@ hovbox ~indent:2 @@ pp_test_view ~project)
 
 (* --- *)
 

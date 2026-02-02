@@ -14,9 +14,13 @@ type 'r corpus
     type {!raw_test}. *)
 val make
   : workspace: Sc_core.Types.workspace
-  -> 'raw_test Types.repr
-  -> Types.params
+  -> 'raw_test Types.corpus_params
   -> 'raw_test corpus Lwt.t
+
+val read_raw_test
+  : 'raw_test corpus
+  -> _ Sc_sys.File.file
+  -> 'raw_test Lwt.t
 
 (** [read_test corpus f] reads a test from file [f]; returns [None] if [f]
     does not contain a valid input. *)
@@ -83,6 +87,7 @@ val stop_receiving_tests: _ corpus -> unit Lwt.t
     inserted into the database. *)
 val register_one_bypassed_test: _ corpus -> unit Lwt.t
 
+val test_repr: 'raw_test corpus -> 'raw_test Types.repr
 val test_struct: _ corpus -> Sc_values.Struct.typ
 
 val info: _ corpus -> Types.info

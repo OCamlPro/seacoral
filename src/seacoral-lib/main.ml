@@ -126,10 +126,12 @@ let crosscheck_with_lreplay_results ~project
       let open Sc_corpus.Types in
       Sc_corpus.existing_tests project.corpus |>
       Lwt_stream.filter (fun t -> t.metadata.outcome = Covering_label) |>
+      Lwt_stream.map_s (Sc_corpus.Printer.delayed_test_view_printer
+                          ~corpus:project.corpus) |>
       Lwt_stream.to_list
     in
     Log.LWT.warn "@[<v>@[Label-covering@ tests:@]@;%a@]"
-      (Sc_project.Printer.pp_tests ~project) tests
+      Sc_corpus.Printer.pp_tests tests
 
 (* --- *)
 

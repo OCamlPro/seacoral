@@ -138,6 +138,7 @@ val from_name: string -> _ t
 *)
 
 val assume: string -> _ t                              (* no check *)
+val assume_with_suffix: _ t -> string -> _ t            (* no check *)
 val assume_in: dir: dir -> string -> _ t                (* no check *)
 val assume_dir: string -> dir                          (* no check *)
 val assume_dir_in: dir: dir -> string -> dir            (* no check *)

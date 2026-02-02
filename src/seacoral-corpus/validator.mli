@@ -25,6 +25,10 @@ val setup
   : 'raw_test t
   -> 'raw_test ready Lwt.t
 
+val params
+  : 'raw_test ready
+  -> 'raw_test Types.validator_params
+
 val validate_raw_test_file
   : _ ready
   -> ?purpose: validation_purpose

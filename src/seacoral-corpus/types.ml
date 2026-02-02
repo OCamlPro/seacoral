@@ -8,15 +8,16 @@
 (*                                                                        *)
 (**************************************************************************)
 
-type params =
-  {
-    test_struct: Sc_values.Struct.typ;
-    run_num: int;
-  }
-
 (** module for test inputs representation *)
 type 'raw_test repr =
   (module Sc_values.Struct.REPR with type Val.t = 'raw_test)
+
+type 'raw_test corpus_params =
+  {
+    test_repr: 'raw_test repr;
+    test_struct: Sc_values.Struct.typ;
+    run_num: int;
+  }
 
 type 'raw_test decoder_params =
   {
@@ -25,14 +26,14 @@ type 'raw_test decoder_params =
     test_struct: Sc_values.Struct.typ;
   }
 
-type 'r validator_params =
+type 'raw_test validator_params =
   {
     cil: Cil.file;             (** CIL representation for the whole C project *)
     func_repr: Sc_C.Types.func_repr;        (** representation of the entrypoint
                                                 function *)
     func_header: [`h] Sc_sys.File.file;    (** C header file with declaration of
                                                entrypoint and globals *)
-    test_repr: 'r repr;              (** module for test inputs representation *)
+    test_repr: 'raw_test repr;      (** module for test inputs representation *)
     test_struct: Sc_values.Struct.typ;
     test_timeout: float option;                    (** test vaidation timeout *)
     init_func: Sc_C.Types.func_repr option; (** optional initialization
@@ -51,7 +52,7 @@ type 'r validator_params =
     value (via [link]). *)
 type 'a test_view =
   {
-    raw: 'a Lazy.t;
+    raw: 'a Lwt.t Lazy.t;
     link: 'x. 'x Sc_sys.File.t -> unit Lwt.t;
     metadata: test_metadata;
   }

@@ -10,36 +10,34 @@
 
 open Sc_sys.File.TYPES
 
-(** [with_bidirectional_channel ?import_suff ?read_test ?write_test ?on_import
-    ~toolname corpus dirname f] calls [f] after having setup a bi-directional
-    exchange protocol with the runtime database [corpus].
+(** [with_bidirectional_channel ?import_suff ?import_filter ?validation_purpose
+    ?read_test ?write_test ~toolname corpus validator dirname f] calls [f] after
+    having setup a bi-directional exchange channel with [corpus].
 
-    According to this protocol, each file newly created in directory [dirname]
-    and whose name does not terminate with [import_suff] (set to [".imported"]
-    by default), is read by using [read_test] ([Corpus.read_test corpus] by
-    default), and the resulting input is exported to [corpus] in the name of
-    [toolname].
+    According to the underlying exchange protocol, each file newly created in
+    directory [dirname] and whose name does not terminate with [import_suff]
+    ([".imported"] by default), is submitted to the validator [validator] after
+    having been read using [read_test] (which is {!Main.read_raw_test} by
+    default). Submission is performed in the name of [toolname], with purpose
+    [purpose] ({!Validator.For_full_validation} by default).
 
-    Reciprocally, every file shared with [corpus] during the execution of [f]
-    and until [with_bidirectional_channel] terminates is placed into [dirname]
-    by using [write_test]: the latter is [`Link] by default, which means a
-    filesystem link is used; alternatively a user-defined function [write] may
-    be specified with [`Func write].  Files imported in this way are not subject
-    to the aforementioned export mechanism.  If given, [on_import metadata] is
-    called with metadata about [i] before [i] is imported; this import is
-    aborted if [on_import] is rejected.
-
-    Please see limitations of {!Utils.monitor_dir} for the case [dirname] does
-    not exist upon call; limitations pertaining to the argument [write_test]
-    also apply. *)
+    Reciprocally, the file of any test that: (i) is shared with [corpus] during
+    the execution of [f] and until [with_bidirectional_channel] terminates, and
+    (ii) whose metadata passes [import_filter] (if provided), is placed into
+    [dirname] by using [write_test]: the latter is [`Link] by default, which
+    means a filesystem link is used; alternatively a user-defined function
+    [write] may be specified with [`Func write].  Files imported in this way are
+    not subject to the aforementioned export mechanism. *)
 val with_bidirectional_channel
   : ?import_suff: string
-  -> read_test: ('a file -> ('raw_test * Types.test_outcome) option Lwt.t)
+  -> ?import_filter: (Types.test_metadata -> bool Lwt.t)
+  -> ?validation_purpose: Validator.validation_purpose
+  -> ?read_test: (_ file -> 'raw_test Lwt.t)
   -> ?write_test: [< `Func of _ file -> 'raw_test -> unit Lwt.t
                   | `Link > `Link ]
-  -> ?on_import: (Types.test_metadata -> unit Lwt.t)
   -> toolname: string
   -> 'raw_test Main.corpus
+  -> 'raw_test Validator.ready
   -> dir
   -> (unit -> 'a Lwt.t)
   -> 'a Lwt.t

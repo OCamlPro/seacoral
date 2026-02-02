@@ -181,6 +181,9 @@ let parent = dir                                           (* alias for `dir` *)
 
 let assume = from_name                               (* alias for `from_name' *)
 
+let assume_with_suffix f suffix =
+  assume @@ name f ^ suffix
+
 let existing filename =
   let file = from_name filename in
   fail_on_missing file;

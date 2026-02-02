@@ -202,7 +202,7 @@ let write_test_file (type raw_test) ~(project: raw_test project)
         Log.LWT.info "@[Test@ driver@ `%a'@ already@ exists@]"
           Sc_sys.File.print out_file
       else
-        let raw_test = Lazy.force raw in
+        let* raw_test = Lazy.force raw in
         let>*% ppf = out_file in
         let* () = emit_test_file ~project ~metadata ppf raw_test in
         Log.LWT.info "@[<hov>Wrote@ test@ driver@ `%a'@ with@ inputs@;@[%a@]@]"
@@ -246,11 +246,12 @@ let emit_testsuite_file (type raw_test) ~(project: raw_test project)
   in
   let* () =
     Lwt_list.iter_s begin fun { metadata; raw; _ } ->
+      let* raw_test = Lazy.force raw in
       let C_printer.{ pp_heap; pp_globals; pp_locals } =
         let globals = project.params.func_repr.func_env.glob_vars
         and locals = project.params.func_repr.func_args in
         C_printer.instructions_as_c_code ~globals ~locals @@
-        Raw_test.Val.fields_as_c_allocations (Lazy.force raw)
+        Raw_test.Val.fields_as_c_allocations raw_test
       in
       ignore pp_heap; (* always a no-op (cf Sc_values...instructions_as_c_code) *)
       Lwt_fmt.fprintf ppf
