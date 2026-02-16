@@ -141,6 +141,8 @@ let skipped_functions_arg = function
 let lannot_to_opt { cover_criterion; annoted_functions;
                     skipped_functions; output_file } cmd =
   cmd
+  |> Cmd.key "simplify-cfg"
+  (* Simplify cfg is used to transform switches into ITE. *)
   |> Cmd.base "lannot" cover_criterion
   |> funs_to_opt annoted_functions
   |> skipped_functions_arg skipped_functions
