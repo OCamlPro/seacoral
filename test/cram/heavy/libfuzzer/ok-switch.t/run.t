@@ -1,5 +1,5 @@
   $ export SC_ENABLE_DETAILED_STATS=yes
-  $ seacoral --tools libfuzzer
+  $ seacoral --tools libfuzzer --config switch.toml
   [A]{Sc} Starting to log into `_sc/switch.c-CC-@1/logs/1.log'
   [A]{Sc} Initializing working environment...
   [A]{Sc} Doing the hard work...

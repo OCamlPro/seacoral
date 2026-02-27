@@ -1,14 +1,1 @@
-[project]
-files = ["switch.c"]
-entrypoint = "f"
-
-[klee]
-timeout = 5
-
-[libfuzzer]
-timeout = 0
-runs = 100
-seed = 42
-
-[cbmc]
-timeout = 5
+../../common-files/switch/switch.toml

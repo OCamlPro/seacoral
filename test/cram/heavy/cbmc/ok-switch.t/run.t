@@ -1,4 +1,4 @@
-  $ seacoral --tools cbmc
+  $ seacoral --tools cbmc --config switch.toml
   [A]{Sc} Starting to log into `_sc/switch.c-CC-@1/logs/1.log'
   [A]{Sc} Initializing working environment...
   [A]{Sc} Doing the hard work...
@@ -19,7 +19,7 @@
                  7: Covered
                  8: Covered
           Coverage: (8/8) 100.0%
-  $ seacoral --tools cbmc --cbmc-mode assert --clean-start
+  $ seacoral --tools cbmc --cbmc-mode assert --config switch.toml --clean-start
   [A]{Sc} Starting to log into `_sc/switch.c-CC-@2/logs/1.log'
   [A]{Sc} Initializing working environment...
   [A]{Sc} Doing the hard work...
