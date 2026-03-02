@@ -49,9 +49,9 @@
 +COPY                      dune* Makefile* seacoral/
 +COPY                      src seacoral/src/
 +COPY                      test seacoral/test/
+ RUN make -C seacoral apply-frama-c-patch
  RUN if [ "$RUN_TESTS" = yes ];                                                 \
      then time make -C seacoral ci-tests CI_TESTS_JOBS=$RUN_TESTS_JOBS;         \
-     fi
 @@ -169,7 +169,7 @@
  # Still, we remove the seacora/.git directory afterwards to accelerate
  # opam pinning (which appears to copy the whole source tree)

@@ -162,7 +162,7 @@ let post_process_eacsl_loop ~(project: _ Sc_project.Types.project) ~options l =
           "Aborting e-acsl execution. It looks like e-acsl-gcc.sh is failing on \
            every test. You can re-try by replacing the e-acsl-gcc.sh script in \
            '%s/bin' by the one in '<seacoral-source-code>/scripts/'" @@
-        Sc_sys.Env.get "OPAM_SWITCH_PREFIX" ~default:"$(YOUR_OPAM_SWITCH)"
+        Sc_sys.Env.get "OPAM_SWITCH_PREFIX" ~default:"$(OPAM_SWITCH_PREFIX)"
       in
       Lwt.return new_stats
     else if not parallel || new_stats.errors = 0

@@ -153,6 +153,7 @@ ARG RUN_TESTS_JOBS=1
 COPY --chown=diver:divers dune* Makefile* seacoral/
 COPY --chown=diver:divers src seacoral/src/
 COPY --chown=diver:divers test seacoral/test/
+RUN make -C seacoral apply-frama-c-patch
 RUN if [ "$RUN_TESTS" = yes ];                                                 \
     then time make -C seacoral ci-tests CI_TESTS_JOBS=$RUN_TESTS_JOBS;         \
     fi

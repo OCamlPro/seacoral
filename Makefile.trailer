@@ -52,6 +52,23 @@ check-superdockerfile:
 	patch -o - docker/Dockerfile docker/Superdockerfile.patch |	\
 	diff  -u - docker/Superdockerfile
 
+# Set `ENABLE_FRAMA_C_PATCH_REAPPLICATION` to `yes` to ignore errors
+# due to re-application of the patch.
+APPLY_FRAMA_C_PATCH_RULE_TAG =
+ifeq ($(ENABLE_FRAMA_C_PATCH_REAPPLICATION),yes)
+  APPLY_FRAMA_C_PATCH_RULE_TAG = -
+endif
+.PHONY: apply-frama-c-patch
+apply-frama-c-patch:
+	$(APPLY_FRAMA_C_PATCH_RULE_TAG) \
+	if test "x$$OPAM_SWITCH_PREFIX" = "x"; then \
+	  opam exec -- $(MAKE) apply-frama-c-patch; \
+	elif test -f "$$OPAM_SWITCH_PREFIX/bin/e-acsl-gcc.sh"; then \
+	  patch --forward --backup-if-mismatch --reject-file /dev/null \
+	        "$$OPAM_SWITCH_PREFIX/bin/e-acsl-gcc.sh" \
+	        src/patches/frama-c/e-acsl-gcc.sh.patch; \
+	fi
+
 # Make sure `make opam` proceeds even though there exists an `opam`
 # subdirectory.
 .PHONY: opam

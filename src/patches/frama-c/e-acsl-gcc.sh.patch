@@ -1,0 +1,12 @@
+--- e-acsl-gcc.sh	2025-10-07 17:01:54.331849725 +0200
++++ e-acsl-gcc.sh	2025-10-10 13:51:31.093405983 +0200
+@@ -1068,8 +1110,8 @@
+     $OPTION_ASSERT_PRINT_DATA
+     $OPTION_CONCURRENCY
+     -e-acsl-share="$EACSL_SHARE"
+-    -then-last"
++    -then"
+ fi
+ 
+ # Instrument
+ if [ -n "$OPTION_INSTRUMENT" ]; then
