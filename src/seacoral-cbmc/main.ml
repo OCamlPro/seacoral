@@ -33,21 +33,11 @@ module Log =
   (val (Ez_logs.from_src @@
         Logs.Src.create "Sc_cbmc" ~doc:"Logs of CBMC"))
 
-(* Copies the resource file corresponding to the current cbmc moden then
-   generates the harness in the workspace.
-   Returns the harness file and its internal representation. *)
-let harness_gen ~resdir ~project ~workspace =
+(* Returns the harness file and its internal representation. *)
+let harness_gen ~project ~workspace =
   let workdir = workspace.workdir in
   let target = workdir / "harness.c" in
-  (* We copy the correct resource file in the work space. This allows
-     to only change this file to switch modes. *)
-  let cbmc_driver =
-    let orig_file = resdir / "cbmc_driver.h" in
-    let new_file = workdir / "cbmc_driver.h" in
-    Sc_sys.File.link orig_file new_file;
-    new_file
-  in
-  let harness = Harness.generate ~project ~target ~cbmc_driver in
+  let harness = Harness.generate ~project ~target in
   (target, harness)
 
 let config_section =
@@ -135,7 +125,7 @@ let setup ~dry:_ ~(workspace : Sc_core.Types.workspace) ~(opt: OPTIONS.t)
     Sc_core.Workspace.install_resources_in ~workspace
       Common.resource_installer
   in
-  let harness_file, harness_repr = harness_gen ~resdir ~project ~workspace in
+  let harness_file, harness_repr = harness_gen ~project ~workspace in
   let runner_iteration = project.config.project_run.run_num in
   let inputs = workspace.workdir / "inputs"
   and outputs = workspace.workdir / "outputs" in

@@ -141,12 +141,6 @@ module TYPES = struct
       pointer_memory_map : memory_validity AP.Map.t
     }
 
-  type printer =
-    {
-      pp_label_decl: PPrt.pu;
-      pp_body: (Format.formatter -> env);
-    }
-
   and env =
     {
       entrypoint: string;
@@ -206,7 +200,8 @@ let make_symbolic_base ~env ppf (t, id) =
     let c_ty = Fmt.str "%a" pp_ctypes_static t in
     let ty = String.replace_spaces ~by:'_' c_ty in
     env.inputs <- StrMap.add v id env.inputs;
-    Fmt.pf ppf "%s = %a;@, __CPROVER_input(%S, %s);" v nondet_call ty v v
+    Fmt.pf ppf "@,%s = %a;" v nondet_call ty;
+    Fmt.pf ppf "@,__CPROVER_input(@[%S,@ %s@]);" v v;
   end
 
 (** Symbolizes each of the [size] cells of the array specified by the
@@ -226,16 +221,16 @@ let make_symbolic_array
 
 let pp_cstring_input ~env ~id ~buff_len ppf =
   let v = AP.to_string id in
-  Fmt.pf ppf "@[<v 2>do {@;";
-  Fmt.pf ppf "/* Initializing string '%s' */@," v;
-  Fmt.pf ppf "static char __str[%u];@," (buff_len + 1); (* Note: hardcoded char *)
+  Fmt.pf ppf "@,@[<v 2>do {";
+  Fmt.pf ppf "@,/* Initializing string '%s' */" v;
+  Fmt.pf ppf "@,static char __str[%u];" (buff_len + 1); (* Note: hardcoded char *)
   for i = 0 to buff_len - 1 do
     let path = Fmt.str "%s[%u]" v i in
-    Fmt.pf ppf "__CPROVER_input (%S, __str[%u]);@," path i;
+    Fmt.pf ppf "@,__CPROVER_input (@[%S,@ __str[%u]@]);" path i;
     env.inputs <- StrMap.add path (AP.append_index id i) env.inputs;
   done;
-  Fmt.pf ppf "__CPROVER_assume (__str[%u] == '\\000');@," buff_len;
-  Fmt.pf ppf "%s = __str;" v;
+  Fmt.pf ppf "@,__CPROVER_assume (__str[%u] == '\\000');" buff_len;
+  Fmt.pf ppf "@,%s = __str;" v;
   Fmt.pf ppf "@]@,} while (0);"
 
 (** Prints a set of instruction for allocating a pointer [id] to a dynamic size,
@@ -245,21 +240,26 @@ let pp_static_malloc ~env ~id ~size_ap ~max_size ~typ ppf =
   let n = AP.to_string id in
   let empty_array_flag = Fmt.str "empty-array:%s" n in
   env.empty <- StrMap.add empty_array_flag id env.empty;
-  Fmt.pf ppf "@[<v 2>do {@;";
-  Fmt.pf ppf "/* Initializing pointer '%s' */@," n;
-  Fmt.pf ppf "char __empty = %a;@," nondet_call "char";
-  Fmt.pf ppf "__CPROVER_input (\"%s\", __empty);@," empty_array_flag;
-  Fmt.pf ppf "if (__empty) {@,";
-  Fmt.pf ppf "  static %a;@," Sc_values.Printer.c_decl (Array (typ, 0), "x");
-  Fmt.pf ppf "  %s = x;@," n;
-  Fmt.pf ppf "  __CPROVER_assume(%s == 0);@," size_ap;
-  Fmt.pf ppf "}@,";
-  Fmt.pf ppf "else if (%s == 0) %s = 0;@," size_ap n;
-  for i = 0 to max_size do
-    Fmt.pf ppf "else if (%s == %i) %s = malloc(%i);@,\
-               " size_ap i n (typ_size * i)
+  Fmt.pf ppf "@,@[<v 2>do {";
+  Fmt.pf ppf "@,/* Initializing pointer '%s' */" n;
+  Fmt.pf ppf "@,switch (%s) {" size_ap;
+  Fmt.pf ppf "@,case 0:";
+  Fmt.pf ppf "@,  char __empty = %a;" nondet_call "char";
+  Fmt.pf ppf "@,  __CPROVER_input (@[\"%s\",@ __empty@]);" empty_array_flag;
+  (* Fmt.pf ppf "@,  if (__empty != 0) %s = malloc (0);" n; *)
+  Fmt.pf ppf "@,  if (__empty != 0) {";
+  (*              Node: necessary for now, malloc(0) *)
+  Fmt.pf ppf "@,    static %a;" Sc_values.Printer.c_decl (Array (typ, 0), "x");
+  Fmt.pf ppf "@,    %s = x;" n;
+  Fmt.pf ppf "@,  }";
+  Fmt.pf ppf "@,  else %s = NULL;" n;
+  Fmt.pf ppf "@,  break;";
+  for i = 1 to max_size do
+    Fmt.pf ppf "@,@[<v 2>case %i:@,%s = malloc (%i);@,break;@]\
+               " i n (typ_size * i)
   done;
-  Fmt.pf ppf "else __CPROVER_assume(0);";
+  Fmt.pf ppf "@,@[<v 2>default:@,__CPROVER_assume (0);@]";
+  Fmt.pf ppf "@,}";
   Fmt.pf ppf "@]@,} while (0);"
 
 let fresh_size_var =
@@ -298,12 +298,12 @@ let rec make_symbolic_cons
       | Ctypes_static.Pointer pted ->
          Log.debug "Symbolizing pointer %a" AP.print id;
          let pp_initialize_referenced_values ~id ~size_ap ~max =
-           Fmt.pf ppf "@[<v>/* Initializing referenced values */@,";
+           Fmt.pf ppf "@,@[<v>/* Initializing referenced values */";
            for cpt = 0 to max - 1 do
              let new_id = AP.append_index id cpt in
-             Fmt.pf ppf "@[<v 2>if (%s > %i) {@," size_ap cpt;
+             Fmt.pf ppf "@,@[<v 2>if (%s > %i) {@," size_ap cpt;
              (make_symbolic_cons ~sd ~env ppf new_id).f pted;
-             Fmt.pf ppf "@]@,}@,"
+             Fmt.pf ppf "@]@,}"
            done;
            Fmt.pf ppf "@]"
          in
@@ -315,12 +315,11 @@ let rec make_symbolic_cons
                   Log.debug
                     "Cannot find memory validity of %a, assuming too deep"
                     AP.print new_id;
-                  Fmt.pf ppf "%s = 0;" (AP.to_string new_id);
+                  Fmt.pf ppf "@,%s = 0;" (AP.to_string new_id);
                | `Carray_with_bound_length max ->
                   let size_ap = fresh_size_var () in
-                  Fmt.pf ppf "int %s = %a;@," size_ap nondet_call "int";
+                  Fmt.pf ppf "@,int %s = %a;@," size_ap nondet_call "int";
                   pp_static_malloc ~env ~id:new_id ~size_ap ~max_size:max ~typ:pted ppf;
-                  Fmt.pf ppf "@,";
                   pp_initialize_referenced_values ~id:new_id ~size_ap ~max
                | `Carray_with_length_field f ->
                   (* Note: for now `f.ap_suffix` is assumed to be relative to
@@ -330,15 +329,12 @@ let rec make_symbolic_cons
                     AP.to_string @@
                     emit_size_ap ~env ~id ~constrained_ptr_id:new_id ppf f
                   in
-                  Fmt.pf ppf "@,";
                   let max = Test_repr.Params.encoding_params.max_ptr_array_length in
                   pp_static_malloc ~env ~id:new_id ~size_ap ~max_size:max ~typ:pted ppf;
-                  Fmt.pf ppf "@,";
                   pp_initialize_referenced_values ~id:new_id ~size_ap ~max
                | `Cstring ->
                   pp_cstring_input ~env ~id:new_id ppf
-                    ~buff_len:Test_repr.Params.encoding_params.max_cstring_length;
-                  Fmt.pf ppf "@,"
+                    ~buff_len:Test_repr.Params.encoding_params.max_cstring_length
            }
       | Ctypes_static.Struct {fields; _} ->
          emit_struct_fields ~sd ~env ~id ppf fields
@@ -347,18 +343,18 @@ let rec make_symbolic_cons
          make_symbolic_base ~env ppf (t, id)
       | Ctypes_static.Union {ufields; _} ->
          let case_var = fresh_cases_var () in
-         Fmt.pf ppf "char %s = %a;@," case_var nondet_call "char";
+         Fmt.pf ppf "@,char %s = %a;@," case_var nondet_call "char";
          List.iteri
            (fun i (Ctypes_static.BoxedField {fname; ftype; _}) ->
              let id = AP.append_field id fname in
-             Fmt.pf ppf "if (%s == %i) {@,  @[<v 2>" case_var i;
+             Fmt.pf ppf "@,if (%s == %i) {@,  @[<v 2>" case_var i;
              (make_symbolic_cons ~sd ~env ppf id).f ftype;
-             Fmt.pf ppf "@]@,} else "
+             Fmt.pf ppf "@]@,} else"
            )
            ufields;
          (* Finishing with an else as there is at least one element in
             the list *)
-         Fmt.pf ppf " __CPROVER_assume(0);"
+         Fmt.pf ppf "@,__CPROVER_assume (0);"
       | t ->
          make_symbolic_base ~env ppf (t, id)
   }
@@ -418,7 +414,7 @@ let label_decl sd ppf =
   let lbls = sd.labels.simpl in
   List.iter
     (fun ((S l) : [`simple] Sc_C.Types.cov_label) ->
-      Fmt.pf ppf "sc_cov_label_declare(%i);@," l.cov_label_id
+      Fmt.pf ppf "@,sc_cov_label_declare(%i);" l.cov_label_id
     )
     lbls
 
@@ -426,7 +422,7 @@ let cover_labels ppf sd =
   let lbls = sd.labels.simpl in
   List.iter
     (fun ((S l) : [`simple] Sc_C.Types.cov_label) ->
-      Fmt.pf ppf "sc_cover_statement(%i);@," l.cov_label_id
+      Fmt.pf ppf "@,sc_cover_statement(%i);" l.cov_label_id
     )
     lbls
 
@@ -437,28 +433,26 @@ let declare_tested_function_args ppf { params = A params; _ } =
   let args = Sc_C.Defs.varset params.func_repr.func_args in
   let declare_arg typ v () =
     if Strings.mem v args
-    then Fmt.pf ppf "%a;@;" Sc_values.Printer.c_decl (typ, v)
+    then Fmt.pf ppf "@,%a;" Sc_values.Printer.c_decl (typ, v)
   in
   Sc_values.Struct.fold_fields params.test_struct ()
     ~f:{ f = declare_arg }
 
 let emit_oracle_assessment_macro ppf =
-  Fmt.pf ppf "#define __sc_assess_oracle(e) \\\
-              @\n  __CPROVER_assert (e, %S)@\n" oracle_property_identifier
+  Fmt.pf ppf "@,#define __sc_assess_oracle(e) \\\
+              @\n  __CPROVER_assert (e, %S)" oracle_property_identifier
 
-let body ({ params = A params; _ } as sd) ppf =
+let emit_body_n_gen_env ({ params = A params; _ } as sd) ppf =
   let env = empty_env "main" in
   Fmt.pf ppf
-    "\
-     %t\
-     @\nint main () {\
-     @\n  @[<v>%a@]\
-     @\n  @[<v>%a@]\
-     @\n  @[<v>%t@]\
-     @\n  @[<v>%a@]\
-     @\n  return 0;\
-     @\n}
-     @."
+    "%t\
+     @,@[<v 2>int main () {\
+     %a\
+     %a\
+     @,%t\
+     @,@[<hov>%a@]\
+     @,return 0;\
+     @]@,}"
     emit_oracle_assessment_macro
     declare_tested_function_args sd
     (symbolize_inputs env) sd
@@ -468,25 +462,20 @@ let body ({ params = A params; _ } as sd) ppf =
     cover_labels sd;
   env
 
-let printer sd =
-  {
-    pp_label_decl = label_decl sd;
-    pp_body = body sd;
-  }
-
 let pp_include ppf filename =
-  Fmt.pf ppf "#include %S@\n" filename
+  Fmt.pf ppf "@,#include %S" filename
 
-let generate ~project ~target ~cbmc_driver =
+let generate ~project ~target =
   let sd = support_data project in
-  let {pp_body; pp_label_decl} = printer sd in
   let labelized_file = project.label_data.labelized_file in
   let>% ppf = target in
   Log.debug "Writing@ harness@ file@ `%a'" Sc_sys.File.print target;
-  pp_include ppf (Sc_sys.File.absname cbmc_driver);
-  pp_label_decl ppf;
+  Fmt.pf ppf "@[<v>#include <cbmc_driver.h>";
+  Fmt.pf ppf "@,@[<hov>%t@]" (label_decl sd);
   pp_include ppf (Sc_sys.File.absname labelized_file);
-  pp_body ppf
+  let env = emit_body_n_gen_env sd ppf in
+  Fmt.pf ppf "@]@.";
+  env
 
 (* --- *)
 

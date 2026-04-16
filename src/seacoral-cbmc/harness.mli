@@ -30,7 +30,6 @@ val oracle_property_identifier : string
 val generate
   : project:_ Sc_project.Types.project
   -> target:[> `C] Sc_sys.File.t
-  -> cbmc_driver:[> `H] Sc_sys.File.t
   -> t
 
 val entrypoint: t -> string

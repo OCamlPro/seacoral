@@ -166,7 +166,7 @@ let goal_stream_to_test_cases_stream ~env ~harness ~stream =
              ) t
          in
          List.map (fun (t, c) -> `Test (t, Labels c)) new_tests
-    )  
+    )
 
 (* First, reads the trace until it reaches an invalid assertion that does not
    correspond to a label and accumulates the labels covered by the trace.

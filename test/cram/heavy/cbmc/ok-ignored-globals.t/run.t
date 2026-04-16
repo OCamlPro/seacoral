@@ -15,16 +15,12 @@
           Coverage: (2/2) 100.0%
 
 Check that `__unused_global` is not symbolized:
-  $ tail --lines +7 _sc/last/cbmc/harness.c
+  $ tail --lines +6 _sc/last/cbmc/harness.c
   int main () {
     int b;
-    
     b = nondet_int();
-     __CPROVER_input("b", b);
+    __CPROVER_input("b", b);
     (void) f (b);
-    sc_cover_statement(1);
-    sc_cover_statement(2);
-    
+    sc_cover_statement(1);sc_cover_statement(2);
     return 0;
   }
-       
