@@ -359,7 +359,7 @@ let triage (type raw_test) (wd: raw_test working_data) ?env ?(mortal = true)
   else begin
     let* cancel_kill =
       Sc_store.on_termination wd.project.store
-        ~h:(fun _ -> Sc_sys.Process.kill ~delay:1. Sys.sigint proc)
+        ~h:(fun _ -> Sc_sys.Process.terminate ~delay:1. proc)
     in
     let* () = Sc_sys.Process.join proc in
     cancel_kill ()
@@ -428,7 +428,7 @@ let exec_fuzzer (type raw_test) (wd: raw_test working_data) ?env exe outdir
     in
     let* cancel_kill =
       Sc_store.on_termination wd.project.store
-        ~h:(fun _ -> Sc_sys.Process.kill ~delay:1. Sys.sigint proc)
+        ~h:(fun _ -> Sc_sys.Process.terminate ~delay:1. proc)
     in
     let* () = Sc_sys.Process.join proc in
     cancel_kill ()
@@ -442,10 +442,19 @@ let exec_fuzzer (type raw_test) (wd: raw_test working_data) ?env exe outdir
    is read several times. *)
 let validate_n_share_test (type r) purpose (wd: r working_data) file =
   let module Raw_test = (val wd.project.params.test_repr) in
-  let* test_str = Sc_sys.Lwt_file.read file in
-  Sc_corpus.Validator.validate_n_share_raw_test wd.validator
-    ~corpus:wd.project.corpus ~toolname ~purpose @@
-  Raw_test.Val.of_string wd.project.params.test_struct test_str
+  Lwt.catch begin fun () ->
+    let* test_str = Sc_sys.Lwt_file.read file in
+    Sc_corpus.Validator.validate_n_share_raw_test wd.validator
+      ~corpus:wd.project.corpus ~toolname ~purpose @@
+    Raw_test.Val.of_string wd.project.params.test_struct test_str
+  end begin function
+    | Sc_values.Struct.Invalid_value_representation _ ->
+        (* May be raised when the fuzzer is terminated aburptly and produces a
+           partial input. *)
+        Lwt.return ()
+    | e ->
+        Lwt.reraise e
+  end
 
 let with_dynamic_tests_sharing wd ~f dir =
   Sc_corpus.Sharing.with_bidirectional_channel wd.project.corpus dir f
