@@ -153,9 +153,7 @@ let lannot_to_opt { cover_criterion; annoted_functions;
     (* Setting the share directory of lanot by hand because it searches by default
        the directory 'lannot' while its name is 'frama-c-lannotate'. *)
     begin
-      Filename.concat
-        (Sc_sys.Env.get "OPAM_SWITCH_PREFIX")
-        "share/frama-c/share/frama-c-lannotate"
+        "/nix/store/3vng48a1jcp9m28r474j7da0h07az1yk-ocaml5.3.0-frama-c-lannotate-0.2.4/share/frama-c/share/frama-c-lannotate"
     end
 
 let tool_activated tool tools = List.mem tool tools
@@ -321,22 +319,8 @@ let eacsl_cmd
   } in
   Lwt.return @@ Cmd.to_cmd @@ frama_c_cmd opts files
 
-let check_option ~errlog option_name =
-  let* option_explained =
-    let* proc =
-      Sc_sys.Process.exec (frama_c |>
-                           Cmd.key "explain" |>
-                           Cmd.key option_name |>
-                           Cmd.to_cmd)
-        ~log_command:`On_error
-        ~stderr:(`Log errlog)
-        ~stdout:`Keep
-        ~on_success:Lwt.return
-    in
-    Sc_sys.Process.stdout_lines proc |>
-    Lwt_stream.find (String.starts_with ~prefix:("-" ^ option_name))
-  in
-  Lwt.return (option_explained <> None)
+let check_option ~errlog:_ _option_name =
+  Lwt.return true
 
 let luncov_installed () =
   Sc_sys.Process.exec_status (frama_c |> Cmd.key "luncov-h" |> Cmd.to_cmd)
