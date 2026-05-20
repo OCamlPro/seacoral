@@ -74,9 +74,10 @@ and test_outcome =
   | Oracle_failure                              (** The test fails the oracle *)
 
 and sanitizer_error_summary =
-  | Heap_buffer_overflow of int64
-  | Invalid_memory_address of int64                                   (* SEGV *)
-  | Arithmetic_error of int64
+  | Heap_buffer_overflow of { pc: int64 }
+  | Global_buffer_overflow of { pc: int64 }
+  | Invalid_memory_address of { pc: int64 }                           (* SEGV *)
+  | Arithmetic_error of { pc: int64 }
 
 (** Revalidation/replay *)
 

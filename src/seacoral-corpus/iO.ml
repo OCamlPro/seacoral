@@ -15,18 +15,20 @@ open Types
 (** {2 RTE "identifiers"} *)
 
 let print_sanitizer_error_summary = function
-  | Heap_buffer_overflow addr ->
-      Basics.PPrt.asprintf "rte:heap-buffer-overflow\t0x%Lx" addr
-  | Invalid_memory_address addr ->
-      Basics.PPrt.asprintf "rte:invalid-memory-address\t0x%Lx" addr
-  | Arithmetic_error addr ->
-      Basics.PPrt.asprintf "rte:arithmetic-error\t0x%Lx" addr
+  | Heap_buffer_overflow { pc } ->
+      Basics.PPrt.asprintf "rte:heap-buffer-overflow\t0x%Lx" pc
+  | Global_buffer_overflow { pc } ->
+      Basics.PPrt.asprintf "rte:global-buffer-overflow\t0x%Lx" pc
+  | Invalid_memory_address { pc } ->
+      Basics.PPrt.asprintf "rte:invalid-memory-address\t0x%Lx" pc
+  | Arithmetic_error { pc } ->
+      Basics.PPrt.asprintf "rte:arithmetic-error\t0x%Lx" pc
 
 let print_cover_summary ints =
   Basics.PPrt.asprintf
     "cover\t%a"
     (fun fmt l -> List.iter (fun i -> Fmt.int fmt i; Fmt.string fmt "\t") l)
-    (Basics.Ints.elements ints) 
+    (Basics.Ints.elements ints)
 
 let print_oracle_fail () = "oracle-fail\t"
 
@@ -47,18 +49,21 @@ let scan_list ic =
   loop Basics.Ints.empty
 
 let scan_summary (ic: Scanf.Scanning.in_channel) =
+  let rte err = Triggering_RTE err in
   Scanf.bscanf ic "%s@\t" begin function
     | "rte:heap-buffer-overflow" ->
-        Scanf.bscanf ic "0x%Lx"
-          (fun addr -> Triggering_RTE (Heap_buffer_overflow addr))
+        Scanf.bscanf ic "0x%Lx" (fun pc -> rte @@ Heap_buffer_overflow { pc })
+    | "rte:global-buffer-overflow" ->
+        Scanf.bscanf ic "0x%Lx" (fun pc -> rte @@ Global_buffer_overflow { pc })
     | "rte:invalid-memory-address" ->
-        Scanf.bscanf ic "0x%Lx"
-          (fun addr -> Triggering_RTE (Invalid_memory_address addr))
+        Scanf.bscanf ic "0x%Lx" (fun pc -> rte @@ Invalid_memory_address { pc })
     | "rte:arithmetic-error" ->
-        Scanf.bscanf ic "0x%Lx"
-          (fun addr -> Triggering_RTE (Arithmetic_error addr))
-    | "cover" -> Covering_label (scan_list ic)
-    | "oracle-fail" -> Oracle_failure
+        Scanf.bscanf ic "0x%Lx" (fun pc -> rte @@ Arithmetic_error { pc })
+    | "cover" ->
+        Covering_label (scan_list ic)
+    | "oracle-fail" ->
+        Oracle_failure
     | key ->
-        raise (Scanf.Scan_failure (Fmt.str "unknown sanitizer error key %S" key))
+        Fmt.kstr (fun s -> raise (Scanf.Scan_failure s))
+          "unknown sanitizer error key %S" key
   end

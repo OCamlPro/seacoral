@@ -396,11 +396,13 @@ let remove_log log =
 let sanitizer_summary_parsers =
   [
     mk_parser "SUMMARY: AddressSanitizer: heap-buffer-overflow (%_s@+0x%Lx)"
-      (fun loc -> Heap_buffer_overflow loc);
+      (fun pc -> Heap_buffer_overflow { pc });
+    mk_parser "SUMMARY: AddressSanitizer: global-buffer-overflow (%_s@+0x%Lx)"
+      (fun pc -> Global_buffer_overflow { pc });
     mk_parser "SUMMARY: AddressSanitizer: SEGV (%_s@+0x%Lx)"
-      (fun loc -> Invalid_memory_address loc);
+      (fun pc -> Invalid_memory_address { pc });
     mk_parser "SUMMARY: AddressSanitizer: FPE (%_s@+0x%Lx)"
-      (fun loc -> Arithmetic_error loc);
+      (fun pc -> Arithmetic_error { pc });
   ]
 
 let scan_sanitizer_lines ~log:(module Log: Ez_logs.T) lines =

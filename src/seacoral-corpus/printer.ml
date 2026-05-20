@@ -46,12 +46,14 @@ let pp_oracle_failures_info ppf { num_fails_gen; num_fails_imported; _ } =
 (** {2 RTE "identifiers"} *)
 
 let pp_sanitizer_error_summary ppf = function
-  | Heap_buffer_overflow addr ->
-      Fmt.pf ppf "heap-buffer-overflow at 0x%Lx" addr
-  | Invalid_memory_address addr ->
-      Fmt.pf ppf "invalid-memory-address at 0x%Lx" addr
-  | Arithmetic_error addr ->
-      Fmt.pf ppf "arithmetic error at 0x%Lx" addr
+  | Heap_buffer_overflow { pc } ->
+      Fmt.pf ppf "heap-buffer-overflow at pc=0x%Lx" pc
+  | Global_buffer_overflow { pc } ->
+      Fmt.pf ppf "global-buffer-overflow at pc=0x%Lx" pc
+  | Invalid_memory_address { pc } ->
+      Fmt.pf ppf "invalid-memory-address at pc=0x%Lx" pc
+  | Arithmetic_error { pc } ->
+      Fmt.pf ppf "arithmetic error at pc=0x%Lx" pc
 
 let pp_test_outcome ppf = function
   | Covering_label i ->
