@@ -15,4 +15,4 @@ check afterwards with a hack.
   [A]{Sc} Skipped reporting of lreplay results
 
   $ tr -d '\0' < _sc/last/store/store | wc -c
-  85
+  91
